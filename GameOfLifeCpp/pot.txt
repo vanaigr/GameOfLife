@@ -1,0 +1,354 @@
+/******************************************************************************
+
+                              Online C++ Compiler.
+               Code, Compile, Run and Debug C++ program online.
+Write your code in this editor and press "Run" button to compile and execute it.
+
+*******************************************************************************/
+
+#include <iostream>
+#include <string>
+#include <array>
+
+#define D GridCell::DEAD
+#define A GridCell::ALIVE
+#define W GridCell::WALL
+
+enum class GridCell : uint8_t
+{
+	DEAD = 0,
+	ALIVE = 1,
+	WALL = 0b10000
+};
+
+using namespace std;
+
+namespace gridCell {
+	bool isAlive(const GridCell cell);
+	bool isDead(const GridCell cell);
+	bool isWall(const GridCell cell);
+}
+
+template <typename E>
+    constexpr inline typename std::underlying_type<E>::type to_underlying(const E e) noexcept {
+        return static_cast<typename std::underlying_type<E>::type>(e);
+    }
+
+bool gridCell::isAlive(const GridCell cell) {
+	return ((to_underlying(cell)) & 0b1);
+}
+bool gridCell::isWall(const GridCell cell) {
+	return (to_underlying(cell) >> 4) & 1;
+}
+bool gridCell::isDead(const GridCell cell) {
+	return !isWall(cell) && !isAlive(cell);
+}
+
+
+GridCell nextGeneration(const GridCell cell, const uint32_t aliveNegihboursCount) {
+    const uint8_t anc = aliveNeighboursCount;
+	const uint8_t alive = (((anc >> 1) & 1) & ~((anc >> 2) & 1))& gridCell::isAlive(cell);
+	const uint8_t wall_ = ((gridCell::isWall(cell)) & ~alive);
+	const uint8_t dead = ~wall_ & (~gridCell::isAlive(cell) & (((anc >> 1) & 1) & ~((anc >> 2) & 1)& ((anc) & 1)));
+	const uint8_t wall = wall_ << 4;
+	const auto cell = alive | wall | dead;
+	return *(GridCell*)(void*)(&cell);
+        
+        /*0 = 0000
+        1 = 0001
+        2 = 0010
+        3 = 0011
+        4 = 0100
+        5 = 0101
+        6 = 0110
+        7 = 0111
+        8 = 1000
+        9 = 1001*/
+     //return static_cast<GridCell>(
+	//	gridCell::isWall(cell) * to_underlying(GridCell::WALL) | 
+	//	gridCell::isDead(cell) & ((aliveNegihboursCount >> 1) & 1) & ((aliveNegihboursCount) & 1) | 
+	//	gridCell::isAlive(cell) & ~((aliveNegihboursCount >> 1) & 1));
+	/*if (gridCell::isDead(cell) && aliveNegihboursCount == 3) {
+		return GridCell::ALIVE;
+	}
+	else if (gridCell::isAlive(cell) && (aliveNegihboursCount < 2 || aliveNegihboursCount > 3)) {
+		return GridCell::DEAD;
+	}
+	return cell;*/
+}
+
+array<GridCell, 9> testForCell(GridCell cell) {
+    array<GridCell, 9> actual;
+    for(unsigned int i = 0; i < 9; i++) {
+        actual[i] = nextGeneration(cell, i);
+    }
+    return actual;
+}
+
+void compareAndPrint(string name, GridCell (&expected)[9], array<GridCell, 9> actual) {
+    for(unsigned int i = 0; i < 9; i++) {
+        if(expected[i] != actual[i]) cout << name << ' ' << i << " expected: " << ((int)to_underlying(expected[i])) << " acutal: " << ((int)to_underlying(actual[i])) << endl;
+    }
+}
+
+int main()
+{  //    number of negihbours v    0  1  2 ...
+    GridCell  expectedForDead[9] { D, D, D, A, D, D, D, D, D };
+    GridCell expectedForAlive[9] { D, D, A, A, D, D, D, D, D };
+    GridCell  expectedForWall[9] { W, W, W, W, W, W, W, W, W };
+    
+    compareAndPrint("dead ", expectedForDead , testForCell(D));
+    compareAndPrint("alive", expectedForAlive, testForCell(A));
+    compareAndPrint("wall ", expectedForWall , testForCell(W));
+    
+    cout << "end " << endl;
+}
+
+
+
+
+
+
+
+grid->setCellAtCoord(vec2i(0, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(0, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(2, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(2, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(4, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(4, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(6, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(6, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(8, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(8, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(10, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(10, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(12, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(12, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(14, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(14, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(16, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(16, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(18, 0), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(18, 0), FieldCell::ALIVE);
+
+
+	grid->setCellAtCoord(vec2i(1 + 0, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 0, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 2, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 2, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 4, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 4, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 6, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 6, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 8, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 8, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 10, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 10, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 12, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 12, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 14, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 14, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 16, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 16, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 18, 1), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(1 + 18, 1), FieldCell::ALIVE);
+
+
+	grid->setCellAtCoord(vec2i(0, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(0, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(2, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(2, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(4, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(4, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(6, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(6, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(8, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(8, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(10, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(10, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(12, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(12, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(14, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(14, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(16, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(16, 2), FieldCell::ALIVE);
+	grid->setCellAtCoord(vec2i(18, 2), FieldCell::ALIVE);
+
+
+
+//temporary (and buggy: buffers are still filled with 'GridCell::DEAD')
+	const std::shared_ptr<GridData> data = std::make_unique<GridData>(
+		GridData{
+			this->gridPimpl,
+			this->interrupt_flag,
+			0,
+			height()
+		}
+	);
+	auto& grid = data->grid;
+	const auto width = grid->width;
+	const auto height = grid->height;
+	const int lastElement = width - 1;
+	const int rowCount = data->rowCount;
+	const int startRow = data->startRow;
+
+	const auto setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid->bufferCellAt(index) = cell; }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
+	const auto cellAt = [&grid](uint32_t index) -> FieldCell& { return grid->cellAt(index); }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
+	const auto isCell = [&cellAt](uint32_t index) -> bool { return fieldCell::isAlive(cellAt(index)); };
+
+	for (uint32_t rowIndex_ = 0; rowIndex_ < rowCount; rowIndex_++) {
+		const uint32_t rowIndex = rowIndex_ + startRow;
+		const uint32_t row = rowIndex * width;
+
+		uint32_t startColumn = 0;
+		for (;;) {
+			const uint32_t startIndex = row + startColumn;
+
+			//const size_t sizeOfBatch = sizeof(__m128i); //dependent on CellsGrid fullSize
+			
+			//const __m256i topCellRow = _mm256_loadu_si256(reinterpret_cast<__m256i*>(&cellAt(startIndex - width)));
+			//const __m256i curCellRow = _mm256_loadu_si256(reinterpret_cast<__m256i*>(&cellAt(startIndex)));
+			//const __m256i botCellRow = _mm256_loadu_si256(reinterpret_cast<__m256i*>(&cellAt(startIndex + width)));
+
+			//const __m256i aliveMask = _mm256_set1_epi8(0b1);
+			//const __m256i zero = _mm256_set1_epi64x(0);
+
+			////const __m128i topAliveRow = _mm256_and(topCellRow, aliveMask);
+			////const __m128i curAliveRow = _mm_and_si128(curCellRow, aliveMask);
+			////const __m128i botAliveRow = _mm_and_si128(botCellRow, aliveMask);
+
+			//const __m256i cellsInRows = _mm256_add_epi64(topCellRow, curCellRow);//_mm256_add_epi64(topCellRow, _mm256_add_epi64(curCellRow, botCellRow));
+			//const __m256i cellsAliveInRows = _mm256_and_si256(topCellRow, aliveMask);
+			//const __m256i cells3by3NeighboursAlive =
+			//	_mm256_add_epi8(
+			//		cellsAliveInRows,
+			//		_mm256_add_epi8(
+			//			_mm256_alignr_epi8(cellsAliveInRows, zero, 1), //left
+			//			_mm256_alignr_epi8(cellsAliveInRows, zero, 1)  //rigth
+			//		)
+			//	);
+
+			//const __m256i cellsActualNeighboursAlive = _mm256_sub_epi8(cells3by3NeighboursAlive, curCellRow);
+
+			//alignas(16) uint8_t cellsNeighbours[sizeOfBatch];
+			//_mm256_store_si256((__m256i*)cellsNeighbours, cellsActualNeighboursAlive);
+
+			//uint32_t remainingCells = width - startColumn;
+			//uint32_t maxCells = misc::min(remainingCells, sizeOfBatch);
+			//FieldCell newGen[sizeOfBatch - 2];
+
+			const size_t sizeOfBatch = sizeof(__m128i); //dependent on CellsGrid fullSize
+
+			const __m128i topCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(startIndex - width)));
+			const __m128i curCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(startIndex)));
+			const __m128i botCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(startIndex + width)));
+
+			const __m128i aliveMask = _mm_set1_epi8(0b1);
+
+			const __m128i topAliveRow = _mm_and_si128(topCellRow, aliveMask);
+			const __m128i curAliveRow = _mm_and_si128(curCellRow, aliveMask);
+			const __m128i botAliveRow = _mm_and_si128(botCellRow, aliveMask);
+
+			const __m128i cellsAliveInRows = _mm_add_epi8(topAliveRow, _mm_add_epi8(curAliveRow, botAliveRow));
+			const __m128i cells3by3NeighboursAlive =
+				_mm_add_epi8(
+					cellsAliveInRows,
+					_mm_add_epi8(
+						_mm_bslli_si128(cellsAliveInRows, 1), //left
+						_mm_bsrli_si128(cellsAliveInRows, 1)  //rigth
+					)
+				);
+
+			const __m128i cellsActualNeighboursAlive = _mm_sub_epi8(cells3by3NeighboursAlive, curCellRow);
+
+			alignas(16) uint8_t cellsNeighbours[sizeOfBatch];
+			_mm_store_si128((__m128i*)cellsNeighbours, cellsActualNeighboursAlive);
+
+			uint32_t remainingCells = width - startColumn;
+			uint32_t maxCells = misc::min(remainingCells, sizeOfBatch);
+			FieldCell newGen[sizeOfBatch - 2];
+
+			for (uint32_t offset = 1; offset < maxCells - 1; offset++) {
+				const uint32_t curCellIndex = startIndex + offset;
+				const auto curCell = cellAt(curCellIndex);
+				const uint8_t aliveNeighbours = cellsNeighbours[offset];
+
+				//setBufferCellAt(curCellIndex, gridCell::nextGeneration(curCell, aliveNeighbours));
+				newGen[offset - 1] = fieldCell::nextGeneration(curCell, aliveNeighbours);
+			}
+
+			std::memcpy(&grid->bufferCellAt(startIndex + 1), &newGen, sizeof(FieldCell) * (maxCells - 2));
+
+			if (remainingCells < sizeOfBatch) {
+				break;
+			}
+
+			startColumn += sizeOfBatch - 2;
+			/*
+				const uint32_t startIndex = row + startColumn;
+
+				const size_t sizeOfBatch = 64; //dependent on CellsGrid fullSize
+				static_assert(sizeOfBatch > 2, "sizeOfBatch of 0, 1, 2 doesnt make sense here");
+				FieldCell topCellRow[sizeOfBatch];
+				FieldCell curCellRow[sizeOfBatch];
+				FieldCell botCellRow[sizeOfBatch];
+
+				std::memcpy(&topCellRow, &cellAt(startIndex - width), sizeof(topCellRow));
+				std::memcpy(&curCellRow, &cellAt(startIndex), sizeof(curCellRow));
+				std::memcpy(&botCellRow, &cellAt(startIndex + width), sizeof(botCellRow));
+
+				uint8_t cellsAliveInRows[sizeOfBatch];
+				for (size_t i = 0; i < sizeOfBatch; i++) cellsAliveInRows[i] = fieldCell::isAlive(topCellRow[i]) + fieldCell::isAlive(curCellRow[i]) + fieldCell::isAlive(botCellRow[i]);
+
+				uint8_t cellsNeighboursAlive[sizeOfBatch - 2];
+				for (size_t i = 1; i < sizeOfBatch - 1; i++) cellsNeighboursAlive[i-1] = cellsAliveInRows[i-1] + cellsAliveInRows[i] + cellsAliveInRows[i + 1];
+
+			uint32_t remainingCells = width - startColumn;
+			uint32_t maxCells = misc::min(remainingCells, sizeOfBatch);
+
+			FieldCell newGen[sizeOfBatch - 2];
+			for (uint32_t offset = 0; offset < maxCells - 2; offset++) {
+				const uint32_t cellOffset = offset + 1;
+				const uint32_t curCellIndex = startIndex + cellOffset;
+				const auto curCell = cellAt(curCellIndex);
+				const uint8_t aliveNeighbours = cellsNeighboursAlive[offset] - fieldCell::isAlive(curCellRow[cellOffset]);
+
+				//setBufferCellAt(curCellIndex, gridCell::nextGeneration(curCell, aliveNeighbours));
+				newGen[offset] = fieldCell::nextGeneration(curCell, aliveNeighbours);
+			}
+
+			std::memcpy(&grid->bufferCellAt(startIndex + 1), &newGen, sizeof(FieldCell) * (maxCells - 2));
+
+			if (remainingCells < sizeOfBatch) {
+				break;
+			}
+
+			startColumn += sizeOfBatch - 2;*/
+		}
+
+		//first element
+		{
+			const int index = row;
+			const auto curCell = cellAt(index);
+			const unsigned char bottomRowNeighbours = isCell(row + width + lastElement) + isCell(index + width) + isCell(index + width + 1);
+			const unsigned char    topRowNeighbours = isCell(row - width + lastElement) + isCell(index - width) + isCell(index - width + 1);
+			const unsigned char aliveNeighbours = topRowNeighbours + isCell(row + lastElement) + isCell(index + 1) + bottomRowNeighbours;
+
+			setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
+		}
+		{ //last element
+			const int index = row + lastElement;
+			const auto curCell = cellAt(index);
+			const unsigned char bottomRowNeighbours = isCell(index + width - 1) + isCell(index + width) + isCell(row + width + 0);
+			const unsigned char    topRowNeighbours = isCell(index - width - 1) + isCell(index - width) + isCell(row - width + 0);
+			const unsigned char aliveNeighbours = topRowNeighbours + isCell(index - 1) + isCell(row + 0) + bottomRowNeighbours;
+
+			setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
+		}
+		if (data->interrupt_flag.load()) return;
+	}
+
+	gridPimpl->prepareNext();
+	shouldUpdateGrid = true;
+
+	if(true) return;
