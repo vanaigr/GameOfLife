@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <math.h> 
 
-#include "ShaderUtil.h"
 #include "Misc.h"
 #include "Vector.h"
 
@@ -23,10 +22,16 @@
 
 #include "data.h"
 
-//delete
-MedianCounter set{}, bufferSet{}, draw{}, swap{}, update{}, fieldUpdateWait{};
+const uint32_t counterSampleSize = 200;
+UMedianCounter 
+	set{ counterSampleSize }, 
+	bufferSet{ counterSampleSize }, 
+	draw{ counterSampleSize }, 
+	swap{ counterSampleSize }, 
+	update{ counterSampleSize }, 
+	fieldUpdateWait{ counterSampleSize };
 
-UMedianCounter microsecPerFrame{ 20 };
+UMedianCounter microsecPerFrame{ counterSampleSize };
 
 //#define FULLSCREEN
 
@@ -38,7 +43,7 @@ const uint32_t windowWidth = 800, windowHeight = 800;
 
 const uint32_t gridWidth = 100, gridHeight = 100;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 2;
+const uint32_t numberOfTasks = 4;
 std::unique_ptr<Field> grid;
 
 const float size = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
@@ -91,19 +96,22 @@ float r2 = 0; //normalized mouseX
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-
+	
 	if (action == GLFW_PRESS && key == GLFW_KEY_TAB) { //debug info
-		std::cout
-			<< "r1(w key pressed)=" << r1 << std::endl
-			<< "r2(normalized mouse x)=" << r2 << std::endl
-			<< "set=" << set.median() << std::endl
-			<< "buffer set=" << bufferSet.median() << std::endl
-			<< "draw=" << draw.median() << std::endl
-			<< "swap=" << swap.median() << std::endl
-			<< "update=" << update.median() << std::endl
-			<< "field wait=" << fieldUpdateWait.median() << std::endl;
+		const auto printC = [](const std::string label, const UMedianCounter& counter) {
+			std::cout << label << '=' << counter.median()  << ", max=" << counter.max() << std::endl;
+		};
+		std::cout << "r1(w key not pressed)" << '=' << r1 << std::endl;
+		std::cout << "r2(normalized mouse x)" << '=' << r2 << std::endl;
+		printC("set", set);
+		printC("draw", draw);
+		printC("swap", swap);
+		printC("update", update);
+		printC("field wait", fieldUpdateWait);
+
 		const auto mpf = microsecPerFrame.median();
-		std::cout << "fps " << float(1'000'000 / (mpf)) << " (" << (mpf / 1'000) << "ms)" << std::endl;
+		const auto maxfps = microsecPerFrame.max();
+		std::cout << "fps " << float(1'000'000 / (mpf)) << " (" << (mpf / 1'000) << "ms" << ", maximum: " << (maxfps / 1'000) << "ms)" << std::endl;
 	}
 	if (key == GLFW_KEY_ESCAPE) {
 		exit(0);
@@ -327,7 +335,7 @@ int main(void)
 
 	glfwMakeContextCurrent(window);
 
-	glfwSwapInterval(0);
+    glfwSwapInterval(0);
 
 	GLenum err = glewInit();
 	if (err != GLEW_OK)
@@ -377,7 +385,10 @@ int main(void)
 	siv::PerlinNoise noise{};
 	std::srand(75489385988);
 
-	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks) };
+	GLuint ssbo;
+	glGenBuffers(1, &ssbo);
+
+	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks, ssbo, window) };
 	grid->stopAllGridTasks();
 	
 	for (size_t i = 0; i < gridSize; i++) {
@@ -388,13 +399,10 @@ int main(void)
 	}
 	grid->startAllGridTasks();
 
-	GLuint ssbo;
-	glGenBuffers(1, &ssbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
 	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size() * 2, grid->grid(), GL_DYNAMIC_DRAW);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
 
 	//uniforms set
 	glUniform1i(glGetUniformLocation(programId, "width"), GLint(windowWidth));
@@ -414,6 +422,8 @@ int main(void)
 	GLint deltaOffsetChangeP = glGetUniformLocation(programId, "deltaOffsetChange");
 
 	GLint mousePosP = glGetUniformLocation(programId, "mousePos");
+
+	GLint is2ndBufferP = glGetUniformLocation(programId, "is2ndBuffer");
 
 	setProgramId(programId);
 	setSSBOHandle(ssbo);
@@ -444,20 +454,23 @@ int main(void)
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			if (grid->isGridUpdated()) {
+			glUniform1ui(is2ndBufferP, !grid->isField2ndBuffer());
+
+			grid->grid();
+			/*if (grid->isGridUpdated()) {
 				Timer<> t{};
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
 				glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(FieldCell) * grid->size(), grid->grid());
 				glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 				bufferSet.add(t.elapsedTime());
-			}
+			}*/
 			set.add(t.elapsedTime());
 		}
 
 		while ((err = glGetError()) != GL_NO_ERROR)
 		{
-			std::cout << err << std::endl;
+			fprintf(stderr, "Error %lu: %s\n", err, glewGetErrorString(err));
 		}
 
 		//glClear(GL_COLOR_BUFFER_BIT);

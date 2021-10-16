@@ -30,19 +30,21 @@ public:
 	class FieldPimpl;
 	struct GridData;
 	struct PackedGridData;
-public:
-	const uint32_t packedGridSize;
+//public:
+//	const uint32_t packedGridSize;
 private:
 	std::unique_ptr<FieldPimpl> gridPimpl;
 	bool shouldUpdateGrid;
 	bool isStopped = false;
+	bool isFieldGPUBufferOffset = true;
+	std::atomic_bool gpuBufferLock_flag;
 
 	const uint32_t numberOfTasks;
 	std::unique_ptr<std::unique_ptr<Task<std::unique_ptr<GridData>>>[/*numberOfTasks*/]> gridTasks;
 	std::atomic_bool interrupt_flag;
 	std::vector<uint32_t> indecesToBrokenCells;
 public:
-	Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_);
+	Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP, GLFWwindow *window);
 	~Field();
 
 	Field(Field const&) = delete;
@@ -78,10 +80,17 @@ public:
 
 	void stopAllGridTasks();
 	void startAllGridTasks();
+
+	bool isField2ndBuffer();
 private:
 	void waitForGridTasks();
 	void deployGridTasks();
 };
+
+inline bool Field::isField2ndBuffer() {
+	return isFieldGPUBufferOffset;
+}
+
 
 inline void Field::setCellAtCoord(const vec2i& coord, FieldCell cell) {
 	setCellAtIndex(coordAsIndex(coord), cell);

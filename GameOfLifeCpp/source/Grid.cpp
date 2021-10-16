@@ -1,3 +1,6 @@
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+
 #include "Misc.h"
 #include "Grid.h"
 #include <vector>
@@ -31,8 +34,6 @@ FieldCell fieldCell::nextGeneration(const FieldCell cell, const uint32_t aliveNe
 	}
 	return cell;
 }
-
-
 
 static const bool isCellAlive(uint32_t index, const Field &grid)  {
 	return grid.cellAtIndex(index) == FieldCell::ALIVE; }
@@ -83,32 +84,59 @@ public:
 };
 
 struct Field::GridData {
+	MedianCounter gridUpdate{}, waiting{}, bufferSend{};
+	unsigned int grid__iteration = 0;
+
+	uint32_t index;
+
 	std::unique_ptr<FieldPimpl>& grid;
 	std::atomic_bool& interrupt_flag;
+	std::atomic_bool& gpuBufferLock_flag;
 	uint32_t startRow;
 	uint32_t rowCount;
 
+	GLFWwindow* offscreen_context;
+	GLuint bufferP;
+	bool& isOffset;
+	uint32_t offset;
+
+	uint32_t currentOffset() {
+		return offset * isOffset;
+	}
+
 public:
 	GridData(
+		uint32_t index_,
 		std::unique_ptr<FieldPimpl>& grid_,
 		std::atomic_bool& interrupt_flag_,
 		uint32_t startRow_,
-		uint32_t rowCount_
+		uint32_t rowCount_,
+		GLuint bufferP_,
+		bool& isOffset_,
+		uint32_t offset_,
+		std::atomic_bool& gpuBufferLock_flag_,
+		GLFWwindow* offscreen_context_
 	) :
+		index(index_),
 		grid(grid_),
 		interrupt_flag(interrupt_flag_),
 		startRow(startRow_),
-		rowCount(rowCount_)
+		rowCount(rowCount_),
+		 bufferP(bufferP_),
+		 isOffset(isOffset_),
+		 offset(offset_),
+		gpuBufferLock_flag(gpuBufferLock_flag_),
+		offscreen_context(offscreen_context_)
 	{}
 };
 
-struct Field::PackedGridData {
-	std::unique_ptr<FieldPimpl>& grid;
-	std::shared_ptr<uint32_t[]>& packedGrid;
-
-	uint32_t startCell;
-	uint32_t cellsCount;
-};
+//struct Field::PackedGridData {
+//	std::unique_ptr<FieldPimpl>& grid;
+//	std::shared_ptr<uint32_t[]>& packedGrid;
+//
+//	uint32_t startCell;
+//	uint32_t cellsCount;
+//};
 
 FieldCell updatedCell_(const int32_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
 	const FieldCell* grid = &cellsGrid->cellAt(0);
@@ -142,18 +170,17 @@ FieldCell updatedCell_(const int32_t index, const std::unique_ptr<Field::FieldPi
 	return cell;
 }
 
-MedianCounter grid__{};
-int grid__iteration = 0;
-
 void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
-	
 	Timer<> t{};
 	auto& grid = data->grid;
 	const int32_t width = grid->width;
 	const int32_t height = grid->height;
 	const int lastElement = width - 1;
-	const int rowCount = data->rowCount;
-	const int startRow = data->startRow;
+	const uint32_t rowCount = data->rowCount;
+	const uint32_t startRow = data->startRow;
+
+	GLFWwindow* window = data->offscreen_context;
+	glfwMakeContextCurrent(window);
 
 	const auto setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid->bufferCellAt(index) = cell; }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
 	const auto cellAt = [&grid](int32_t index) -> FieldCell& { return grid->cellAt(index); }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
@@ -313,218 +340,146 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	}
 	if (data->interrupt_flag.load()) return;
 
-	/*
-	{
-		uint8_t //top/cur/bot + first/second/last/pre-last
-			tf = isCell(-width), ts = isCell(-width + 1),
-			tl = isCell(-width + lastElement), tp = isCell(-width + lastElement - 1),
-			cf = isCell(0), cs = isCell(1),
-			cl = isCell(lastElement), cp = isCell(lastElement - 1);
+	data->gridUpdate.add(t.elapsedTime());
 
-		for (uint32_t rowIndex_ = 0; rowIndex_ < rowCount; rowIndex_++) {
-			const uint32_t rowIndex = rowIndex_ + startRow;
-			const uint32_t row = rowIndex * width;
 
-			uint8_t
-				bf = isCell(row + width),
-				bs = isCell(row + width + 1),
-				bp = isCell(row + width + lastElement - 1),
-				bl = isCell(row + width + lastElement);
-			//first element
-			{
-				const int index = row;
-				const auto curCell = cellAt(index);
-				const unsigned char    topRowNeighbours = tf + ts + tl;
-				const unsigned char bottomRowNeighbours = bf + bs + bl;
-				const unsigned char aliveNeighbours = topRowNeighbours + cl + cs + bottomRowNeighbours;
+	Timer<> t2{};
+	auto &gpuBufferLock_flag = data->gpuBufferLock_flag;
+	bool expected = false;
+	while (!gpuBufferLock_flag.compare_exchange_weak(expected, true)) {}// ::std::cout << data->index << ":waiting" << ::std::endl; }
 
-				setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-			}
-			{ //last element
-				const int index = row + lastElement;
-				const auto curCell = cellAt(index);
-				const unsigned char    topRowNeighbours = tp + tl + tf;
-				const unsigned char bottomRowNeighbours = bp + bl + bf;
-				const unsigned char aliveNeighbours = topRowNeighbours + cp + cf + bottomRowNeighbours;
+	data->waiting.add(t2.elapsedTime());
+	
+	const auto bufferP = data->bufferP;
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, data->currentOffset() + startIndex, sizeof(FieldCell) * (endIndex - startIndex), &grid->bufferCellAt(startIndex));
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-				setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-			}
-			if (data->interrupt_flag.load()) return;
+	glFinish();
+	data->bufferSend.add(t2.elapsedTime());
 
-			tf = cf;
-			ts = cs;
-			tp = cp;
-			tl = cl;
-			cf = bf;
-			cs = bs;
-			cp = bp;
-			cl = bl;
-		}
-	}
-	/*
-	for (uint32_t rowIndex_ = 0; rowIndex_ < rowCount; rowIndex_++) {
-		const uint32_t rowIndex = rowIndex_ + startRow;
-		const uint32_t row = rowIndex * width;
+	data->grid__iteration++;
+	if (data->grid__iteration % (200 + data->index) == 0) std::cout << data->index << ":" << data->gridUpdate.median() << ' ' << data->waiting.median() << ' ' << data->bufferSend.median() << std::endl;
 
-		//first element
-		{
-			const int index = row;
-			const auto curCell = cellAt(index);
-			const unsigned char bottomRowNeighbours = isCell(row + width + lastElement) + isCell(index + width) + isCell(index + width + 1);
-			const unsigned char    topRowNeighbours = isCell(row - width + lastElement) + isCell(index - width) + isCell(index - width + 1);
-			const unsigned char aliveNeighbours = topRowNeighbours + isCell(row + lastElement) + isCell(index + 1) + bottomRowNeighbours;
+	gpuBufferLock_flag.store(false);
 
-			setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-		}
-		{ //last element
-			const int index = row + lastElement;
-			const auto curCell = cellAt(index);
-			const unsigned char bottomRowNeighbours = isCell(index + width - 1) + isCell(index + width) + isCell(row + width + 0);
-			const unsigned char    topRowNeighbours = isCell(index - width - 1) + isCell(index - width) + isCell(row - width + 0);
-			const unsigned char aliveNeighbours = topRowNeighbours + isCell(index - 1) + isCell(row + 0) + bottomRowNeighbours;
-
-			setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-		}
-		if (data->interrupt_flag.load()) return;
-	}*/
-
-	//glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboHandle());
-	//glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, endIndex - startIndex, &cellAt(startIndex));
-	//glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboHandle());
-	//glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-	grid__.add(t.elapsedTime());
-	grid__iteration++;
-	//if (grid__iteration % 50 == 0) std::cout << grid__.median() << std::endl;
+	//bufferSend__.add(t2.elapsedTime());
+	//grid__iteration++;
+	//if (grid__iteration % 50 == 0) std::cout << grid__.median() << ' ' << bufferSend__.median() << std::endl;
 }
-
-/*void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
-	Timer<> t{};
-	auto& grid = data->grid;
-	const auto width = grid->width;
-	const auto height = grid->height;
-	const int lastElement = width - 1;
-	const int rowCount = data->rowCount;
-	const int startRow = data->startRow;
-
-	const auto setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid->bufferCellAt(index) = cell; }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
-	const auto cellAt = [&grid](uint32_t index) -> FieldCell& { return grid->cellAt(index); }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
-	const auto isCell = [&cellAt](uint32_t index) -> bool { return fieldCell::isAlive(cellAt(index)); };
-
-	for (uint32_t rowIndex_ = 0; rowIndex_ < rowCount; rowIndex_++) {
-		const uint32_t rowIndex = rowIndex_ + startRow;
-		const uint32_t row = rowIndex * width;
-
-		uint32_t startColumn = 0;
-		for (;;) {
-			const uint32_t startIndex = row + startColumn;
-
-			const size_t sizeOfBatch = 64; //dependent on CellsGrid fullSize
-			static_assert(sizeOfBatch > 2, "sizeOfBatch of 0, 1, 2 doesnt make sense here");
-			FieldCell topCellRow[sizeOfBatch];
-			FieldCell curCellRow[sizeOfBatch];
-			FieldCell botCellRow[sizeOfBatch];
-
-			std::memcpy(&topCellRow, &cellAt(startIndex - width), sizeof(topCellRow));
-			std::memcpy(&curCellRow, &cellAt(startIndex), sizeof(curCellRow));
-			std::memcpy(&botCellRow, &cellAt(startIndex + width), sizeof(botCellRow));
-
-			uint8_t cellsAliveInRows[sizeOfBatch];
-			for (size_t i = 0; i < sizeOfBatch; i++) cellsAliveInRows[i] = fieldCell::isAlive(topCellRow[i]) + fieldCell::isAlive(curCellRow[i]) + fieldCell::isAlive(botCellRow[i]);
-
-			uint8_t cellsNeighboursAlive[sizeOfBatch-2];
-			for (size_t i = 1; i < sizeOfBatch-1; i++) cellsNeighboursAlive[i-1] = cellsAliveInRows[i-1] + cellsAliveInRows[i] + cellsAliveInRows[i + 1];
-
-			uint32_t remainingCells = width - startColumn;
-			uint32_t maxCells = misc::min(remainingCells, sizeOfBatch);
-
-			FieldCell newGen[sizeOfBatch-2];
-			for (uint32_t offset = 0; offset < maxCells - 2; offset++) {
-				const uint32_t cellOffset = offset + 1;
-				const uint32_t curCellIndex = startIndex + cellOffset;
-				const auto curCell = cellAt(curCellIndex);
-				const uint8_t aliveNeighbours = cellsNeighboursAlive[offset] - fieldCell::isAlive(curCellRow[cellOffset]);
-
-				//setBufferCellAt(curCellIndex, gridCell::nextGeneration(curCell, aliveNeighbours));
-				newGen[offset] = fieldCell::nextGeneration(curCell, aliveNeighbours);
-			}
-
-			std::memcpy(&grid->bufferCellAt(startIndex + 1), &newGen, sizeof(FieldCell) * (maxCells - 2));
-
-			if (remainingCells < sizeOfBatch) {
-				break;
-			}
-
-			startColumn += sizeOfBatch-2;
-		}
-
-		//first element
-		{
-			const int index = row;
-			const auto curCell = cellAt(index);
-			const unsigned char bottomRowNeighbours = isCell(row + width + lastElement) + isCell(index + width) + isCell(index + width + 1);
-			const unsigned char    topRowNeighbours = isCell(row - width + lastElement) + isCell(index - width) + isCell(index - width + 1);
-			const unsigned char aliveNeighbours = topRowNeighbours + isCell(row + lastElement) + isCell(index + 1) + bottomRowNeighbours;
-
-			setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-		}
-		{ //last element
-			const int index = row + lastElement;
-			const auto curCell = cellAt(index);
-			const unsigned char bottomRowNeighbours = isCell(index + width - 1) + isCell(index + width) + isCell(row + width + 0);
-			const unsigned char    topRowNeighbours = isCell(index - width - 1) + isCell(index - width) + isCell(row - width + 0);
-			const unsigned char aliveNeighbours = topRowNeighbours + isCell(index - 1) + isCell(row + 0) + bottomRowNeighbours;
-
-			setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-		}
-		if (data->interrupt_flag.load()) return;
-	}
-
-	grid__.add(t.elapsedTime());
-	grid__iteration++;
-	if (grid__iteration % 50 == 0) std::cout << grid__.median() << std::endl;
-}*/
 
 FieldCell* Field::grid() {
 	shouldUpdateGrid = false;
 	return &this->gridPimpl->cellAt(0);
 }
 
-Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_) :
+Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP, GLFWwindow* window) :
 	gridPimpl{ new FieldPimpl(gridWidth, gridHeight) },
-	packedGridSize((gridWidth * gridHeight) / (32 / 2) + 1),
+	//packedGridSize(size() / (32 / 2) + 1),
 	shouldUpdateGrid(false),
 
 	numberOfTasks(numberOfTasks_),
-	gridTasks{ NULL },
+	gridTasks{ new std::unique_ptr<Task<std::unique_ptr<GridData>>>[numberOfTasks_] },
 	indecesToBrokenCells{ }
 {
 	assert(numberOfTasks >= 1);
 
-	gridTasks.reset(new std::unique_ptr<Task<std::unique_ptr<GridData>>>[numberOfTasks]);
-	uint32_t rowsBefore = 0;
-	uint32_t remainingRows = height();
-	for (uint32_t i = 0; i < numberOfTasks; i++) {
-		const uint32_t numberOfRows = remainingRows / (numberOfTasks - i);
+	//grid__.median() == 35 ms, bufferSend__.median() == 110 ms.In my case
+	//const double fraction = 35.0 / 110.0; // fractionOfWorkTimeToSendData
 
-		gridTasks.get()[i] = std::unique_ptr<Task<std::unique_ptr<GridData>>>(
+	const double fraction = 1; // fractionOfWorkTimeToSendData
+	/*
+	find amountOfWorkT1. given fraction, workload (grid_height)
+	amountOfWorkT1 — percent of work;
+
+	timeForTask1 = amountOfWorkT1 + amountOfWorkT1 * fraction;
+	timeForTask2 = timeForTask1 + timeForTask1 * fraction;
+	timeForTask3 = timeForTask2 + timeForTask2 * fraction;
+	...
+
+	
+	timeForTask1 + timeForTask2 + timeForTask3 + ... = 1.0;
+	amountOfWorkT1 * (1.0 + fraction) + (amountOfWorkT1 * (1.0 + fraction)) * (1.0  + fraction) + ... = workload * (1.0 + fraction);
+	amountOfWorkT1 * (1.0 + fraction) + amountOfWorkT1 * (1.0  + fraction)^2 + ...  + amountOfWorkT1 * (1.0  + fraction)^numberOfTasks = workload * (1.0 + fraction);
+	amountOfWorkT1 + amountOfWorkT1 * (1.0  + fraction)^1 + ... = workload;
+	amountOfWorkT1 * ((1.0 + fraction) + (1.0  + fraction)^2 + ... + (1.0  + fraction)^(numberOfTasks - 1)) = workload;
+
+	amountOfWorkT1 = 1.0 / ((1.0 + fraction) + (1.0  + fraction)^2 + ... + (1.0  + fraction)^(numberOfTasks - 1));
+
+	amountOfWorkT1 = workload / (((1.0 + fraction) * ((1.0 + fraction)^(numberOfTasks-1) - 1)) / fraction)
+	amountOfWorkT1 = workload / (((1.0 + fraction) * ((1.0 + fraction)^(numberOfTasks-1) - 1))) * fraction
+	*/
+	const double amountOfWorkT1 = height() / ((1.0 + fraction) * (pow((1.0 + fraction), numberOfTasks - 1) - 1)) * fraction;
+
+	const auto createGridTask = [window, this, &bufferP](const uint32_t index, const uint32_t rowsBefore, const uint32_t numberOfRows) -> void {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+		auto* taskWindow = glfwCreateWindow(2, 2, "", NULL, window);
+		if (!taskWindow) {
+			::std::cout << "task window is null";
+			exit(-1);
+		}
+
+		gridTasks.get()[index] = std::unique_ptr<Task<std::unique_ptr<GridData>>>(
 			new Task<std::unique_ptr<GridData>>{
 				threadUpdateGrid,
 				std::make_unique<GridData>(
 					GridData{
+						index,
 						this->gridPimpl,
 						this->interrupt_flag,
 						rowsBefore,
-						numberOfRows
+						numberOfRows,
+						bufferP,
+						isFieldGPUBufferOffset,
+						size(),
+						gpuBufferLock_flag,
+						taskWindow
 					}
 				)
 			}
 
 		);
+	};
+
+	uint32_t rowsBefore = 0;
+	uint32_t remainingRows = height();
+
+	/*for (uint32_t i = 0; i < numberOfTasks; i++) {
+		const uint32_t numberOfRows = remainingRows / (numberOfTasks - i);
+
+		createGridTask(i, rowsBefore, numberOfRows);
+
+		rowsBefore += numberOfRows;
+		remainingRows -= numberOfRows;
+	}*/
+
+	double currentTaskWork = amountOfWorkT1;
+
+	for (uint32_t i = 0; i < numberOfTasks - 1; i++) {
+		const uint32_t numberOfRows = misc::min(remainingRows, static_cast<uint32_t>(ceil(currentTaskWork)));
+		::std::cout << numberOfRows << std::endl;
+
+		createGridTask(i, rowsBefore, numberOfRows);
+
+		rowsBefore += numberOfRows;
+		remainingRows -= numberOfRows;
+
+		currentTaskWork *= (1.0 + fraction);
+	}
+
+	{//last
+		const uint32_t numberOfRows = remainingRows;
+		::std::cout << numberOfRows << std::endl;
+
+		createGridTask(numberOfTasks - 1, rowsBefore, numberOfRows);
 
 		rowsBefore += numberOfRows;
 		remainingRows -= numberOfRows;
 	}
+
+	assert(remainingRows == 0);
+	assert(rowsBefore == height());
 
 	deployGridTasks();
 
@@ -592,8 +547,9 @@ void Field::updateGeneration() {
 
 	gridPimpl->prepareNext();
 	shouldUpdateGrid = true;
-
+	isFieldGPUBufferOffset = !isFieldGPUBufferOffset;
 	interrupt_flag.store(false);
+
 	deployGridTasks();
 }
 

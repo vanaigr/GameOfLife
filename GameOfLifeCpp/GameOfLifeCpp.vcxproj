@@ -149,7 +149,6 @@
     <ClCompile Include="source\Main.cpp" />
     <ClCompile Include="source\Misc.cpp" />
     <ClCompile Include="source\ShaderLoader.cpp" />
-    <ClCompile Include="source\ShaderUtil.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\data.h" />
@@ -160,7 +159,6 @@
     <ClInclude Include="source\Misc.h" />
     <ClInclude Include="source\PimplPtr.h" />
     <ClInclude Include="source\ShaderLoader.h" />
-    <ClInclude Include="source\ShaderUtil.h" />
     <ClInclude Include="source\Task.h" />
     <ClInclude Include="source\Timer.h" />
     <ClInclude Include="source\Vector.h" />

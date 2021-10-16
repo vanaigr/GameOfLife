@@ -38,9 +38,10 @@ layout(std430, binding = 1) buffer Grid
 } packedGrid;
 
 uint cellAt(uint index) {
-    uint arrIndex = index / 4;
-    uint arrShift = (index % 4) * 8;
-    return ((packedGrid.grid[arrIndex + is2ndBuffer * width*height]) >> arrShift) & 3;
+    uint bufIndex = index + is2ndBuffer * gridWidth * gridHeight;
+    uint arrIndex = bufIndex / 4;
+    uint arrShift = (bufIndex % 4) * 8;
+    return ((packedGrid.grid[arrIndex]) >> arrShift) & 3;
 }
 
 layout(origin_upper_left) in vec4 gl_FragCoord;
@@ -117,9 +118,9 @@ float squareVignette(vec2 coord, float radius, float padding, float startGrad, f
 
 float edgeVignette(vec2 coord, float startDistance, float endDistance, float intensity) {
     float whMin = min(width, height);
-    float whMin2 = whMin/2.0;
-    float distToStartHalf_px = (1 - startDistance)* whMin2;
-    float distToEndHalf_px = (1 - endDistance)* whMin2;
+    float whMin2 = whMin / 2.0;
+    float distToStartHalf_px = (1 - startDistance) * whMin2;
+    float distToEndHalf_px = (1 - endDistance) * whMin2;
     float distToXBorderHalf_px = distanceToEdges_px(coord.x, width);
     float distToYBorderHalf_px = distanceToEdges_px(coord.y, height);
     float xV = smoothstep(distToStartHalf_px, distToEndHalf_px, distToXBorderHalf_px);
@@ -152,7 +153,7 @@ vec4 colorForCoords(vec2 screenCoords) {
     uint index = cellX + gridWidth * cellY;
 
     float edgeMask = 0;
-    if (cellX == 0 || cellX == gridWidth-1 || cellY == 0 || cellY == gridHeight-1) edgeMask = .5;
+    if (cellX == 0 || cellX == gridWidth - 1 || cellY == 0 || cellY == gridHeight - 1) edgeMask = .5;
 
     //uint arrIndex = index / (32 / 2);
     //uint arrShift = (index % (32 / 2)) * 2;
@@ -177,7 +178,7 @@ vec4 colorForCoords(vec2 screenCoords) {
     vec4 cell = float(isCell) * float(!isPadding) * cellColor;
     vec4 bkg = float(isNothing) * bkgColor;
     vec4 cellPadding = float(isCell) * float(isPadding) * bkgColor;
-    return wall + cell + bkg + cellPadding; 
+    return wall + cell + bkg + cellPadding;
     //return mix(wall + cell + bkg + cellPadding, vec4(.5, .5, .5, 1), edgeMask);
 }
 
@@ -192,7 +193,7 @@ vec4 col(vec2 coord) {
     vec2 distortedCoord = applyLensDistortion(coord, lensDistortion - (deltaScaleChange / 10.0));
 
     //colorForCoords
-    float red = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 32.0 * currentScale, -0.002 + deltaScaleChange/ 10.0).r;
+    float red = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 32.0 * currentScale, -0.002 + deltaScaleChange / 10.0).r;
     float green = colorForCoordsChromaticAbberation(distortedCoord, 0).g;
     float blue = colorForCoordsChromaticAbberation(distortedCoord + deltaOffsetChange / 32.0 * currentScale, 0.002 - deltaScaleChange / 10.0).b;
 
@@ -225,5 +226,5 @@ vec4 sampleN(vec2 coord, uint n) {
 void main(void) {
     vec2 coord = gl_FragCoord.xy;
 
-    color = sampleN(coord, 7);
+    color = sampleN(coord, 3);
 }

@@ -37,4 +37,30 @@ public:
 		}
 		return value / accumulator.size();
 	}
+
+	double min() const {
+		if (accumulator.size() == 0) {
+			return 0.0;
+		}
+		else {
+			double min = accumulator[0];
+			for (size_t i = 1; i < accumulator.size(); i++) {
+				if(min > accumulator[i]) min = accumulator[i];
+			}
+			return min;
+		}
+	}
+
+	double max() const {
+		if (accumulator.size() == 0) {
+			return 0.0;
+		}
+		else {
+			double max = accumulator[0];
+			for (size_t i = 1; i < accumulator.size(); i++) {
+				if (max < accumulator[i]) max = accumulator[i];
+			}
+			return max;
+		}
+	}
 };
