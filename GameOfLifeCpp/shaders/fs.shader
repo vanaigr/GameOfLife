@@ -11,7 +11,7 @@ uniform float tx;
 uniform float ty;
 
 uniform float deltaScaleChange;
-uniform vec2 deltaOffsetChange;
+//uniform vec2 deltaOffsetChange;
 
 uniform int width;
 uniform int height;
@@ -192,12 +192,14 @@ vec4 col(vec2 coord) {
     float v = squareVignette(coord, 0.06, 0.003, .9, 1.1);
     vec2 distortedCoord = applyLensDistortion(coord, lensDistortion - (deltaScaleChange / 10.0));
 
-    //colorForCoords
-    float red = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 32.0 * currentScale, -0.002 + deltaScaleChange / 10.0).r;
-    float green = colorForCoordsChromaticAbberation(distortedCoord, 0).g;
-    float blue = colorForCoordsChromaticAbberation(distortedCoord + deltaOffsetChange / 32.0 * currentScale, 0.002 - deltaScaleChange / 10.0).b;
+    ////colorForCoords
+    //float red = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 32.0 * currentScale, -0.002 + deltaScaleChange / 10.0).r;
+    //float green = colorForCoordsChromaticAbberation(distortedCoord, 0).g;
+    //float blue = colorForCoordsChromaticAbberation(distortedCoord + deltaOffsetChange / 32.0 * currentScale, 0.002 - deltaScaleChange / 10.0).b;
 
-    return vec4(red, green, blue, 1.0) * (1.0 - v);//colorForCoords(distortedCoord);
+    //return vec4(red, green, blue, 1.0) * (1.0 - v);//colorForCoords(distortedCoord);
+
+    return colorForCoords(distortedCoord);
 }
 
 vec4 sample2(vec2 coord) {

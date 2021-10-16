@@ -94,6 +94,11 @@ std::chrono::steady_clock::time_point curTime;
 float r1 = 1; //w key not pressed
 float r2 = 0; //normalized mouseX
 
+
+GLuint frameBuffer, frameBufferTexture;
+
+
+
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
 	
@@ -206,6 +211,15 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 	//base offset + mouse / size = offset
 }
 
+void window_size_callback(GLFWwindow* window, int width, int height)
+{
+	/*int oldWidth, oldHeight;
+	glfwGetWindowSize(window, &width, &height);
+
+	glBindTexture(GL_TEXTURE_2D, frameBufferTexture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glBindTexture(GL_TEXTURE_2D, 0);*/
+}
 
 vec2 globalToScreen(vec2 coord) {
 	//x = (sx - width / 2f)/scale + width / 2f - tx;
@@ -335,7 +349,7 @@ int main(void)
 
 	glfwMakeContextCurrent(window);
 
-    glfwSwapInterval(0);
+    //glfwSwapInterval(0);
 
 	GLenum err = glewInit();
 	if (err != GLEW_OK)
@@ -351,27 +365,13 @@ int main(void)
 	glfwSetKeyCallback(window, key_callback);
 	glfwSetCursorPosCallback(window, cursor_position_callback);
 	glfwSetMouseButtonCallback(window, mouse_button_callback);
-	glfwSetScrollCallback(window, scroll_callback);
+	glfwSetScrollCallback(window, scroll_callback); 
+	glfwSetWindowSizeCallback(window, window_size_callback);
 
 	GLuint programId = glCreateProgram();
 	ShaderLoader sl{};
-	sl.addShaderFromCode(
-		"\n#version 300 es"
-		"\nprecision mediump float;"
-		"\nvoid main(void){"
-		"\ngl_Position = vec4("
-		"\n    2 * (gl_VertexID / 2) - 1,"
-		"\n    2 * (gl_VertexID % 2) - 1,"
-		"\n    0.0,"
-		"\n    1.0);"
-		"\n}"
-		,
-		GL_VERTEX_SHADER,
-		"Canvas"
-	);
-	//sl.addShaderFromProjectFileName("shaders/gs.shader", GL_GEOMETRY_SHADER, "Main shader");
-	//sl.addShaderFromProjectFileName("shaders/vs.shader",   GL_VERTEX_SHADER, "Main shader");
-	sl.addShaderFromProjectFileName("shaders/fs.shader", GL_FRAGMENT_SHADER, "Main shader");
+	sl.addScreenSizeTriangleStripVertexShader();
+	sl.addShaderFromProjectFilePath("shaders/fs.shader", GL_FRAGMENT_SHADER, "Main shader");
 
 	sl.attachShaders(programId);
 
@@ -387,6 +387,11 @@ int main(void)
 
 	GLuint ssbo;
 	glGenBuffers(1, &ssbo);
+	GLenum status;
+	if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
+		fprintf(stderr, "glCheckFramebufferStatus: error %lu", status);
+		return -1;
+	}
 
 	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks, ssbo, window) };
 	grid->stopAllGridTasks();
@@ -414,16 +419,57 @@ int main(void)
 	glUniform1f(glGetUniformLocation(programId, "size"), GLfloat(size));
 	glUniform1f(glGetUniformLocation(programId, "lensDistortion"), GLfloat(lensDistortion));
 
+	GLint deltaScaleChangeP = glGetUniformLocation(programId, "deltaScaleChange");
+
 	GLint curScaleP = glGetUniformLocation(programId, "currentScale");
 	GLint txP = glGetUniformLocation(programId, "tx");
 	GLint tyP = glGetUniformLocation(programId, "ty");
 
-	GLint deltaScaleChangeP = glGetUniformLocation(programId, "deltaScaleChange");
-	GLint deltaOffsetChangeP = glGetUniformLocation(programId, "deltaOffsetChange");
-
 	GLint mousePosP = glGetUniformLocation(programId, "mousePos");
 
 	GLint is2ndBufferP = glGetUniformLocation(programId, "is2ndBuffer");
+
+
+	glActiveTexture(GL_TEXTURE0);
+	glGenTextures(1, &frameBufferTexture);
+	glBindTexture(GL_TEXTURE_2D, frameBufferTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, windowWidth, windowHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	glGenFramebuffers(1, &frameBuffer);
+	glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, frameBufferTexture, 0);
+	{
+		GLenum status;
+		if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
+			fprintf(stderr, "glCheckFramebufferStatus: error %lu", status);
+			return 0;
+		}
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	GLuint postProcessing = glCreateProgram();
+	ShaderLoader ppsl{};
+	ppsl.addScreenSizeTriangleStripVertexShader();
+	ppsl.addShaderFromProjectFilePath("shaders/pp_id.shader", GL_FRAGMENT_SHADER, "PostProcessing id shader");
+
+	ppsl.attachShaders(postProcessing);
+	glLinkProgram(postProcessing);
+	glValidateProgram(postProcessing);
+	ppsl.deleteShaders();
+
+	GLint frameBufferP = glGetUniformLocation(postProcessing, "frameBuffer");
+	GLint textureSizeP = glGetUniformLocation(postProcessing, "textureSize");
+
+	GLint ppDeltaScaleChangeP = glGetUniformLocation(postProcessing, "deltaScaleChange");
+	GLint deltaOffsetChangeP = glGetUniformLocation(postProcessing, "deltaOffsetChange");
+
+	GLint ppCurScaleP = glGetUniformLocation(postProcessing, "currentScale");
+
 
 	setProgramId(programId);
 	setSSBOHandle(ssbo);
@@ -440,31 +486,24 @@ int main(void)
 	
 	while (!glfwWindowShouldClose(window))
 	{
+		glUseProgram(programId);
+
 		Timer<> frame{};
 		{
 			Timer<> t{};
 			glUniform1f(curScaleP, GLfloat(currentScale));
 			glUniform1f(txP, GLfloat(offset.x));
 			glUniform1f(tyP, GLfloat(offset.y));
-
 			glUniform1f(deltaScaleChangeP, GLfloat(deltaScaleChange));
-			glUniform2f(deltaOffsetChangeP, deltaOffsetChange.x, deltaOffsetChange.y);
+
 			glUniform2f(mousePosP, mousePos.x, mousePos.y);
 
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, !grid->isField2ndBuffer());
+			glUniform1ui(is2ndBufferP, grid->isField2ndBuffer());
 
 			grid->grid();
-			/*if (grid->isGridUpdated()) {
-				Timer<> t{};
-				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-				glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(FieldCell) * grid->size(), grid->grid());
-				glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
-				glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-				bufferSet.add(t.elapsedTime());
-			}*/
 			set.add(t.elapsedTime());
 		}
 
@@ -476,8 +515,9 @@ int main(void)
 		//glClear(GL_COLOR_BUFFER_BIT);
 		{
 			Timer<> t{};
-			//glDrawArrays(GL_POINTS, 0, 1);
+			glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
 			glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			draw.add(t.elapsedTime());
 		}
 		{
@@ -489,6 +529,23 @@ int main(void)
 		}
 
 		{
+			glUseProgram(postProcessing);
+			glBindTexture(GL_TEXTURE_2D, frameBufferTexture);
+
+			glUniform1i(frameBufferP, 0);
+			glUniform2f(textureSizeP, windowWidth, windowHeight);
+
+			glUniform1f(ppDeltaScaleChangeP, GLfloat(deltaScaleChange));
+			glUniform2f(deltaOffsetChangeP, deltaOffsetChange.x, deltaOffsetChange.y);
+
+			glUniform1f(ppCurScaleP, GLfloat(currentScale));
+
+
+			glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+
+		{
 			Timer<> t{};
 			glfwSwapBuffers(window);
 			swap.add(t.elapsedTime());
@@ -497,6 +554,9 @@ int main(void)
 		//std::cout << frame.elapsedTime() << ::std::endl;
 		microsecPerFrame.add(frame.elapsedTime());
 	}
+
+	glDeleteTextures(1, &frameBufferTexture);
+	glDeleteFramebuffers(1, &frameBuffer);
 
 	glfwTerminate();
 	return 0;

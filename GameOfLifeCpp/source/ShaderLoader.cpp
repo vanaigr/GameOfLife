@@ -31,14 +31,15 @@ void ShaderLoader::addShaderFromCode(const std::string& shaderCode, const unsign
 		std::unique_ptr<GLchar[]> strInfoLog{ new GLchar[length + 1] };
 		glGetShaderInfoLog(shader_id, length, &length, strInfoLog.get());
 
-		fprintf(stderr, "Compilation error in shader: %s\n", strInfoLog.get());
+		fprintf(stderr, "Compilation error in shader \"%s\": %s\n", name.c_str(), strInfoLog.get());
 	}
 
 	pimpl->shaders.push_back(shader_id);
 }
 
-void ShaderLoader::addShaderFromProjectFileName(const std::string& fileName, const unsigned int shaderType, const std::string& name) {
+void ShaderLoader::addShaderFromProjectFilePath(const std::string& fileName, const unsigned int shaderType, const std::string& name) {
 	std::ifstream file(fileName);
+	if(file.fail()) fprintf(stderr, "Shader file does not exist: %s\n", fileName.c_str());
 	const std::string shaderCode((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 	this->addShaderFromCode(shaderCode, shaderType, name);
 }
