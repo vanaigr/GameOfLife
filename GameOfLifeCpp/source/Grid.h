@@ -15,7 +15,7 @@ enum class FieldCell : uint8_t
 {
 	DEAD = 0,
 	ALIVE = 1,
-	WALL = 16
+	WALL = 0b10000
 };
 
 namespace fieldCell {
@@ -36,13 +36,15 @@ private:
 	std::unique_ptr<FieldPimpl> gridPimpl;
 	bool shouldUpdateGrid;
 	bool isStopped = false;
-	bool isFieldGPUBufferOffset = true;
+	bool isFieldGPUBufferOffset = false;
 	std::atomic_bool gpuBufferLock_flag;
 
 	const uint32_t numberOfTasks;
 	std::unique_ptr<std::unique_ptr<Task<std::unique_ptr<GridData>>>[/*numberOfTasks*/]> gridTasks;
 	std::atomic_bool interrupt_flag;
 	std::vector<uint32_t> indecesToBrokenCells;
+
+	const GLuint bufferP;
 public:
 	Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP, GLFWwindow *window);
 	~Field();
@@ -63,10 +65,10 @@ public:
 
 	vec2i indexAsCoord(const int32_t index) const;
 
-	int32_t coordAsIndex(const vec2i& coord) const;
-	int32_t coordAsIndex(const int32_t column, const int32_t row) const;
+	uint32_t coordAsIndex(const vec2i& coord) const;
+	uint32_t coordAsIndex(const int32_t column, const int32_t row) const;
 	
-	int32_t normalizeIndex(const int32_t index) const;
+	uint32_t normalizeIndex(const int32_t index) const;
 	vec2i normalizeCoord(const vec2i& coord) const;
 
 	//delete &, append const
@@ -85,6 +87,8 @@ public:
 private:
 	void waitForGridTasks();
 	void deployGridTasks();
+	uint32_t currentOffset();
+	uint32_t nextOffset();
 };
 
 inline bool Field::isField2ndBuffer() {
@@ -111,17 +115,17 @@ inline vec2i Field::indexAsCoord(const int32_t index) const {
 	return vec2i(x, y);
 }
 
-inline int32_t Field::coordAsIndex(const vec2i& coord) const {
+inline uint32_t Field::coordAsIndex(const vec2i& coord) const {
 	const auto coord_n = normalizeCoord(coord);
 	return coord_n.x + coord_n.y * width();
 }
 
-inline int32_t Field::coordAsIndex(const int32_t column, const int32_t row) const {
+inline uint32_t Field::coordAsIndex(const int32_t column, const int32_t row) const {
 	return coordAsIndex(vec2i(column, row));
 }
 
-inline int32_t Field::normalizeIndex(const int32_t index) const {
-	return misc::mod(index, size());
+inline uint32_t Field::normalizeIndex(const int32_t index) const {
+	return misc::umod(index, static_cast<uint32_t>(size()));
 }
 inline vec2i Field::normalizeCoord(const vec2i& coord) const {
 	return vec2i(misc::mod(coord.x, width()), misc::mod(coord.y, height()));

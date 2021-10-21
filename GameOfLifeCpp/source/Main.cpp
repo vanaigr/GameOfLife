@@ -41,9 +41,9 @@ const uint32_t windowWidth = 1920, windowHeight = 1080;
 const uint32_t windowWidth = 800, windowHeight = 800;
 #endif // FULLSCREEN
 
-const uint32_t gridWidth = 100, gridHeight = 100;
+const uint32_t gridWidth = 4'00, gridHeight = 4'00;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 4;
+const uint32_t numberOfTasks = 8;
 std::unique_ptr<Field> grid;
 
 const float size = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
@@ -55,11 +55,10 @@ std::chrono::steady_clock::time_point lastScreenUpdateTime;
 const uint32_t screenUpdatesPerSecond = 40;
 const double screenUpdateTimeMs = 1000.0 / screenUpdatesPerSecond;
 
-const float scaleChasingSpeed = .5;
+const float chasingSpeed = .5;
 float deltaScaleChange = 0;
 float desiredScale = 4.0, currentScale = desiredScale;
 
-const float offsetChasingSpeed = .5;
 vec2 deltaOffsetChange(0, 0);
 vec2 desiredOffset(0, 0), offset = desiredOffset;
 
@@ -99,8 +98,7 @@ GLuint frameBuffer, frameBufferTexture;
 
 
 
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) noexcept {
 	
 	if (action == GLFW_PRESS && key == GLFW_KEY_TAB) { //debug info
 		const auto printC = [](const std::string label, const UMedianCounter& counter) {
@@ -139,10 +137,18 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		else if (key == GLFW_KEY_SPACE) { //sace
 			gridUpdate = !gridUpdate;
 		}
-
-		return;
 	}
-	else if ((key == GLFW_KEY_EQUAL) && brushSize < 30) {
+
+	if (key == GLFW_KEY_GRAVE_ACCENT) {
+		if (action == GLFW_PRESS) {
+			pan = true;
+		}
+		else if (action == GLFW_RELEASE) {
+			pan = false;
+		}
+	}
+
+	if ((key == GLFW_KEY_EQUAL) && brushSize < 30) {
 		brushSize++;
 	}
 	else if (key == GLFW_KEY_MINUS && brushSize >= 1) {
@@ -179,14 +185,12 @@ vec2 mouseToGlobal() {
 	return screenToGlobal(mousePos);
 }
 
-static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey)
-{
+static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey) noexcept {
 	r2 = mousex / windowWidth;
 	mousePos = vec2(mousex, mousey);
 }
 
-void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
-{
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) noexcept {
 	if (action == GLFW_PRESS) {
 		if (button == GLFW_MOUSE_BUTTON_MIDDLE) pan = true;
 		else if (button == GLFW_MOUSE_BUTTON_LEFT) paintMode = PaintMode::PAINT;
@@ -199,8 +203,7 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 	}
 }
 
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
-{
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) noexcept {
 	const float scaleWheelFac = 0.04f;
 
 	desiredScale += desiredScale * yoffset * scaleWheelFac;
@@ -211,8 +214,7 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 	//base offset + mouse / size = offset
 }
 
-void window_size_callback(GLFWwindow* window, int width, int height)
-{
+void window_size_callback(GLFWwindow* window, int width, int height) noexcept {
 	/*int oldWidth, oldHeight;
 	glfwGetWindowSize(window, &width, &height);
 
@@ -248,16 +250,11 @@ void updateState() {
 			const vec2i offset{ xo, yo };
 			const auto coord = cell + offset;
 			if (paintMode == PaintMode::PAINT) {
-				grid->setCellAtCoord(cell + offset, FieldCell::ALIVE);
 				if (brushMode == BrushMode::WALL) grid->setCellAtCoord(coord, FieldCell::WALL);
-				else if (brushMode == BrushMode::CELL && grid->cellAtCoord(coord) != FieldCell::WALL) grid->setCellAtCoord(cell + offset, FieldCell::ALIVE);
+				else if (brushMode == BrushMode::CELL && grid->cellAtCoord(coord) != FieldCell::WALL) grid->setCellAtCoord(cell, FieldCell::ALIVE);
 			}
 			else if (paintMode == PaintMode::DELETE) {
-				for (int32_t xo = -brushSize; xo <= brushSize; xo++) {
-					for (int32_t yo = -brushSize; yo <= brushSize; yo++) {
-						grid->setCellAtCoord(coord, FieldCell::DEAD);
-					}
-				}
+				grid->setCellAtCoord(coord + offset, FieldCell::DEAD);
 			}
 		}
 	}
@@ -270,29 +267,29 @@ void updateState() {
 		fieldUpdateWait.add(t.elapsedTime());
 	}
 
-	if (pan) {
-		const vec2  dmouse = applyLensDistortion(mousePos);
-		const vec2 dpmouse = applyLensDistortion(pmousePos);
-		const vec2 diff = dmouse - dpmouse;
-		desiredOffset += diff / currentScale;
-	}
-
 	const auto screenUpdateElapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - lastScreenUpdateTime).count();
 	const uint32_t updateCount = (screenUpdateElapsedTime / screenUpdateTimeMs);
 	if (updateCount > 0) {
+		if (pan) {
+			const vec2  dmouse = applyLensDistortion(mousePos);
+			const vec2 dpmouse = applyLensDistortion(pmousePos);
+			const vec2 diff = dmouse - dpmouse;
+			desiredOffset += diff / currentScale;
+		}
+
 		lastScreenUpdateTime = curTime; //not quite correct
 
 		const auto prevScale = currentScale;
 		const auto prevOffset = offset;
 		for (uint32_t i = 0; i < updateCount; i++) {
-			currentScale = 1.0 / misc::lerp<double>(1.0/currentScale, 1.0/desiredScale, scaleChasingSpeed); //linear lerp relative to world, not viewport
-			offset = misc::vec2lerp(offset, desiredOffset, offsetChasingSpeed);
+			currentScale = 1.0 / misc::lerp<double>(1.0/currentScale, 1.0/desiredScale, chasingSpeed); //linear lerp relative to world, not viewport
+			offset = misc::vec2lerp(offset, desiredOffset, chasingSpeed);
 		}
-		deltaScaleChange = (currentScale - prevScale) / currentScale;
-		deltaOffsetChange = (offset - prevOffset);
-	}
+		deltaScaleChange = misc::lerp<double>(deltaScaleChange, (1.0 / currentScale - 1.0 / prevScale) / (1.0 / currentScale), chasingSpeed);
+		deltaOffsetChange = misc::vec2lerp(deltaOffsetChange, (offset - prevOffset), chasingSpeed);
 
-	pmousePos = mousePos;
+		pmousePos = mousePos;
+	}
 }
 
 //delete + delete function declaration at the start of the file
@@ -389,7 +386,7 @@ int main(void)
 	glGenBuffers(1, &ssbo);
 	GLenum status;
 	if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
-		fprintf(stderr, "glCheckFramebufferStatus: error %lu", status);
+		fprintf(stderr, "glCheckFramebufferStatus: error %u", status);
 		return -1;
 	}
 
@@ -405,7 +402,9 @@ int main(void)
 	grid->startAllGridTasks();
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size() * 2, grid->grid(), GL_DYNAMIC_DRAW);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size() * 2, NULL, GL_DYNAMIC_DRAW);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(FieldCell) * grid->size(), grid->grid());
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size(), sizeof(FieldCell) * grid->size(), grid->grid());
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
@@ -446,7 +445,7 @@ int main(void)
 	{
 		GLenum status;
 		if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
-			fprintf(stderr, "glCheckFramebufferStatus: error %lu", status);
+			fprintf(stderr, "glCheckFramebufferStatus: error %u", status);
 			return 0;
 		}
 	}
@@ -455,7 +454,8 @@ int main(void)
 	GLuint postProcessing = glCreateProgram();
 	ShaderLoader ppsl{};
 	ppsl.addScreenSizeTriangleStripVertexShader();
-	ppsl.addShaderFromProjectFilePath("shaders/pp_id.shader", GL_FRAGMENT_SHADER, "PostProcessing id shader");
+	ppsl.addShaderFromProjectFilePath("shaders/pp_chromAbb.shader", GL_FRAGMENT_SHADER, "Postprocessing chromatic abberation shader");
+	//ppsl.addShaderFromProjectFilePath("shaders/pp_vignette.shader", GL_FRAGMENT_SHADER, "Postprocessing vignette shader");
 
 	ppsl.attachShaders(postProcessing);
 	glLinkProgram(postProcessing);
@@ -501,7 +501,7 @@ int main(void)
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, grid->isField2ndBuffer());
+			glUniform1ui(is2ndBufferP, !grid->isField2ndBuffer());
 
 			grid->grid();
 			set.add(t.elapsedTime());
@@ -509,7 +509,7 @@ int main(void)
 
 		while ((err = glGetError()) != GL_NO_ERROR)
 		{
-			fprintf(stderr, "Error %lu: %s\n", err, glewGetErrorString(err));
+			fprintf(stderr, "Error %u\n", err);
 		}
 
 		//glClear(GL_COLOR_BUFFER_BIT);

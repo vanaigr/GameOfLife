@@ -24,7 +24,18 @@ namespace misc {
 
     extern float modf(const float x, const float y) noexcept;
 
-    extern constexpr int32_t mod(const int32_t x, const int32_t y) noexcept;
+    constexpr int32_t mod(const int32_t x, const int32_t y) noexcept {
+        int32_t mod = x % y;
+        // if the signs are different and modulo not zero, adjust result
+        if ((x ^ y) < 0 && mod != 0) {
+            mod += y;
+        }
+        return mod;
+    }
+
+    constexpr uint32_t umod(const uint32_t x, const uint32_t y) noexcept {
+        return x % y;
+    }
 
     template<class Type>
     inline constexpr const Type& max(const Type& t1, const Type& t2) {

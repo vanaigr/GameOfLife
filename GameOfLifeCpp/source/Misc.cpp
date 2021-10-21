@@ -9,14 +9,5 @@
 
 
     float misc::modf(const float x, const float y) noexcept {
-        return x - y * floor(x / y);
-    }
-
-    constexpr int32_t misc::mod(const int32_t x, const int32_t y) noexcept {
-        int32_t mod = x % y;
-        // if the signs are different and modulo not zero, adjust result
-        if ((x ^ y) < 0 && mod != 0) {
-            mod += y;
-        }
-        return mod;
+        return x - static_cast<double>(y) * floor(x / static_cast<double>(y));
     }
