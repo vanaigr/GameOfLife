@@ -43,7 +43,7 @@ const uint32_t windowWidth = 800, windowHeight = 800;
 
 const uint32_t gridWidth = 4'00, gridHeight = 4'00;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 8;
+const uint32_t numberOfTasks = 4;
 std::unique_ptr<Field> grid;
 
 const float size = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
