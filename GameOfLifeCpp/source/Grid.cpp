@@ -279,7 +279,6 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 
 	static_assert(sizeOfBatch == 16, "");
 	int32_t i = startIndex & ~(16 - 1);
-	int32_t startOffset = startIndex - i;
 
 	batch128Data batchData;
 
@@ -297,6 +296,8 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	}
 
 	{
+		int32_t startOffset = startIndex - i;
+
 		const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
 
 		std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell) * sizeOfBatch);
@@ -310,7 +311,7 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 		for (uint32_t j = 0; j < j_count; j++, i += sizeOfBatch) {
 			const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
 
-			std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell)* sizeOfBatch);
+			std::memcpy(&grid->bufferCellAt(i), ((FieldCell*)(&newGen)), sizeof(FieldCell)* sizeOfBatch);
 		}
 
 		if (data->interrupt_flag.load()) return;
@@ -319,7 +320,7 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	for (; (i + sizeOfBatch) < endIndex; i += sizeOfBatch) {
 		const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
 
-		std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell)* sizeOfBatch);
+		std::memcpy(&grid->bufferCellAt(i), ((FieldCell*)(&newGen)), sizeof(FieldCell)* sizeOfBatch);
 	}
 
 	if (i != endIndex) {
@@ -327,7 +328,7 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 
 		const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
 
-		std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell)* remainingCells);
+		std::memcpy(&grid->bufferCellAt(i), ((FieldCell*)(&newGen)), sizeof(FieldCell)* remainingCells);
 	}
 	if (data->interrupt_flag.load()) return;
 
