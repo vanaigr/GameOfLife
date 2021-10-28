@@ -15,8 +15,6 @@
 
 #include "data.h"
 
-#include <new>
-
 bool fieldCell::isAlive(const FieldCell cell) {
 	return ((misc::to_underlying(cell)) & 0b1);
 }
@@ -44,7 +42,6 @@ public:
 	const uint32_t size;
 private:
 	const uint32_t padding;
-	const uint32_t additionalPadding;
 	const uint32_t fullSize;
 	std::unique_ptr<FieldCell[]> current; 
 	std::unique_ptr<FieldCell[]> buffer;
@@ -53,19 +50,16 @@ public:
 	FieldPimpl(const uint32_t gridWidth, const uint32_t gridHeight) :
 		width(gridWidth), height(gridHeight), size(gridWidth* gridHeight),
 		padding{ gridWidth },
-		additionalPadding { misc::roundUpIntTo(padding + 16u, 16) - padding },/*+2 duplicate rows (top row duplicate before first row, bottom row duplicate after last row), + extra bytes for memcopy/vector instruction in thread grid update.
-		in must be '+'! Because of reading neighbours at the end of the grid
-		*/
-		fullSize{  size + (padding + additionalPadding) * 2 },
-		current{ new FieldCell[fullSize]{ FieldCell::DEAD } },
+		fullSize{ padding + size + padding + 16u },//+2 duplicate rows (top row duplicate before first row, bottom row duplicate after last row) + extra bytes for memcopy/vector instruction in thread grid update
+		current{ new FieldCell[fullSize]{ FieldCell::DEAD } }, 
 		buffer{ new FieldCell[fullSize]{ FieldCell::DEAD } }
 	{};
 	~FieldPimpl() = default;
 
 	void prepareNext() {
 		current.swap(buffer);
-		std::memcpy(&current[additionalPadding], &(current[size + additionalPadding]), sizeof(FieldCell) * padding);
-		std::memcpy(&current[size + additionalPadding + padding], &(current[padding + additionalPadding]), sizeof(FieldCell) * padding);
+		std::memcpy(&current[0], &(current[size]), sizeof(FieldCell) * padding);
+		std::memcpy(&current[size + padding], &(current[padding]), sizeof(FieldCell) * padding);
 	}
 
 	void fill(const FieldCell cell) {
@@ -77,18 +71,16 @@ public:
 	}
 
 	FieldCell& cellAt(const int32_t index) const {
-		return current.get()[index + padding + additionalPadding];
+		return current.get()[index + padding];
 	}
 
 	FieldCell& bufferCellAt(const int32_t index) const {
-		return buffer.get()[index + padding + additionalPadding];
+		return buffer.get()[index + padding];
 	}
 };
 
 struct Field::GridData {
-	private: static const uint32_t samples = 100;
-	public:
-	UMedianCounter gridUpdate{ samples }, waiting{ samples }, bufferSend{ samples };
+	UMedianCounter gridUpdate{ 500 }, waiting{ 500 }, bufferSend{ 500 };
 	unsigned int grid__iteration = 0;
 
 	uint32_t index;
@@ -106,16 +98,6 @@ struct Field::GridData {
 
 	uint32_t currentOffset() {
 		return offset * isOffset;
-	}
-
-	void generationUpdated() {
-		
-		grid__iteration++;
-		if (grid__iteration % (samples + index) == 0)
-			std::cout << "grid task " << index << ": " 
-			<< gridUpdate.median() << ' ' 
-			<< waiting.median() << ' ' 
-			<< bufferSend.median() << std::endl;
 	}
 
 public:
@@ -187,72 +169,40 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	const auto cellAt = [&grid](int32_t index) -> FieldCell& { return grid->cellAt(index); }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
 	const auto isCell = [&cellAt](int32_t index) -> bool { return fieldCell::isAlive(cellAt(index)); };
 
-	const size_t sizeOfBatch = sizeof(__m128i); //dependent on CellsGrid fullSize
-	static_assert(sizeOfBatch > 0, "");
-
-	struct batch128Data {
-		uint8_t cellFirstCol;
-		__m128i cells3by3Neighbours;
-		__m128i curCellRow;
-		uint8_t cellLastCol;
-
-		static inline batch128Data create(const __m128i topCellRow, const __m128i curCellRow, const __m128i botCellRow, const uint8_t lastColBefore) {
-			static_assert(sizeof FieldCell == sizeof uint8_t, "");
-			__m128i cellsCols = _mm_add_epi8(topCellRow, _mm_add_epi8(curCellRow, botCellRow));
-			uint8_t cellFirstCol = ((uint8_t*)&cellsCols)[0];
-			uint8_t cellLastCol = ((uint8_t*)&cellsCols)[sizeof __m128i - 1];
-			__m128i cells3by3Neighbours =
-				_mm_add_epi8(
-					_mm_add_epi8(
-						cellsCols,
-						_mm_add_epi8(
-							_mm_slli_si128(cellsCols, 1), // << 8 
-							_mm_srli_si128(cellsCols, 1)  // >> 8
-						)
-					)
-					,_mm_setr_epi32(lastColBefore, 0, 0, 0)
-				); static_assert((misc::to_underlying(FieldCell::WALL) & 0b1111) == 0, "adding neighbours together requires 4 bottom bits");
-			return batch128Data{ cellFirstCol, cells3by3Neighbours, curCellRow, cellLastCol };
-		}
-	};
-
 	const auto calcNewGenBatch128 = [&grid](
-		const batch128Data dataForIndex,
-		uint32_t index,
-		batch128Data &dataForNextIndex_out
+		uint32_t index
 		) -> __m128i {
-		const size_t sizeOfBatch = sizeof(__m128i);
-
-
 		const auto cellAt = [&grid](uint32_t index) -> FieldCell& { return grid->cellAt(index); }; // { return data.grid[data.gridO.normalizeIndex(index + (data.startRow * data.gridO.width))]; };
 		const auto width = grid->width;
 
 		static_assert(sizeof FieldCell == 1, "size of field cell must be 1 byte");
-		const __m128i nextTopCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index + sizeOfBatch - width)));
-		const __m128i nextCurCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index + sizeOfBatch + 0    )));
-		const __m128i nextBotCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index + sizeOfBatch + width)));
+		const __m128i topCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index - width)));
+		const __m128i curCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index)));
+		const __m128i botCellRow =  _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index + width)));
 
-		dataForNextIndex_out = batch128Data::create(nextTopCellRow, nextCurCellRow, nextBotCellRow, dataForIndex.cellLastCol);
-
+		const __m128i cellsInRows = _mm_add_epi8(topCellRow, _mm_add_epi8(curCellRow, botCellRow));
 		const __m128i cells3by3Neighbours =
 			_mm_add_epi8(
-				dataForIndex.cells3by3Neighbours,
-				_mm_slli_si128(_mm_setr_epi32(dataForNextIndex_out.cellFirstCol, 0, 0, 0), sizeOfBatch - 1)
-			);
+				cellsInRows,
+				_mm_add_epi8(
+					_mm_slli_si128(cellsInRows, 1), // << 8 
+					_mm_srli_si128(cellsInRows, 1)  // >> 8
+				)
+			); static_assert((misc::to_underlying(FieldCell::WALL) & 0b1111) == 0, "adding neighbours together requires 4 bottom bits");
 
 		const __m128i lowerFourMask = _mm_set1_epi8(0b1111);
-		const __m128i cellsActualNeighboursAlive = _mm_and_si128(_mm_sub_epi8(cells3by3Neighbours, dataForIndex.curCellRow), lowerFourMask);
+		const __m128i cellsActualNeighboursAlive = _mm_and_si128(_mm_sub_epi8(cells3by3Neighbours, curCellRow), lowerFourMask);
 
 		const __m128i wallCell = _mm_set1_epi8(misc::to_underlying(FieldCell::WALL));
 		const __m128i deadCell = _mm_set1_epi8(misc::to_underlying(FieldCell::DEAD));
 		const __m128i aliveCell = _mm_set1_epi8(misc::to_underlying(FieldCell::ALIVE));
 		static_assert((misc::to_underlying(FieldCell::ALIVE)) == 1, "");
 		
-		const __m128i wallsBit        = _mm_and_si128(dataForIndex.curCellRow, wallCell);
-		const __m128i isDead_lowerBit = _mm_andnot_si128(dataForIndex.curCellRow, aliveCell); static_assert(
+		const __m128i wallsBit        = _mm_and_si128(curCellRow, wallCell); 
+		const __m128i isDead_lowerBit = _mm_andnot_si128(curCellRow, aliveCell); static_assert(
 			(misc::to_underlying(FieldCell::ALIVE) & ~misc::to_underlying(FieldCell::DEAD)) == 1
 			, "");
-		const __m128i isAlive_lowerBit = dataForIndex.curCellRow;
+		const __m128i isAlive_lowerBit = curCellRow; 
 		const __m128i is2Alive = _mm_cmpeq_epi8(cellsActualNeighboursAlive, _mm_set1_epi8(2));
 		const __m128i is3Alive = _mm_cmpeq_epi8(cellsActualNeighboursAlive, _mm_set1_epi8(3));
 
@@ -274,60 +224,37 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 		return newGen;
 	};
 
-	const int32_t startIndex = startRow * width;
-	const int32_t endIndex = (startRow + rowCount) * width;
+	const uint32_t startIndex = startRow * width;
+	const uint32_t endIndex = (startRow + rowCount) * width;
 
-	static_assert(sizeOfBatch == 16, "");
-	int32_t i = startIndex & ~(16 - 1);
-	int32_t startOffset = startIndex - i;
+	const size_t sizeOfBatch = sizeof(__m128i); //dependent on CellsGrid fullSize
+	static_assert(sizeOfBatch > 2, "sizeOfBatch of 0, 1, 2 doesnt make sense here");
 
-	batch128Data batchData;
+	uint32_t i = startIndex;
 
-	{
-		const uint8_t lastColBefore = 
-			misc::to_underlying(cellAt(i-1 - width)) + 
-			misc::to_underlying(cellAt(i-1 + 0    )) + 
-			misc::to_underlying(cellAt(i-1 + width));
+	for (const uint32_t j_count = 8; (i + (sizeOfBatch - 2) * j_count) < endIndex;) {
+		for (uint32_t j = 0; j < j_count; j++, i += sizeOfBatch - 2) {
+			const __m128i newGen = calcNewGenBatch128(i);
 
-		const __m128i topCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(i - width)));
-		const __m128i curCellRow = _mm_loadu_si128 (reinterpret_cast<__m128i*>(&cellAt(i + 0    )));
-		const __m128i botCellRow = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(i + width)));
-
-		batchData = batch128Data::create(topCellRow, curCellRow, botCellRow, lastColBefore);
-	}
-
-	{
-		const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
-
-		std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell) * sizeOfBatch);
-
-		if (data->interrupt_flag.load()) return;
-
-		i += sizeOfBatch;
-	}
-
-	for (const uint32_t j_count = 8; (i + (sizeOfBatch) * j_count) < endIndex;) {
-		for (uint32_t j = 0; j < j_count; j++, i += sizeOfBatch) {
-			const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
-
-			std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell)* sizeOfBatch);
+			std::memcpy(&grid->bufferCellAt(i + 1), ((FieldCell*)(&newGen)) + 1, sizeof(FieldCell) * (sizeOfBatch - 2));
 		}
 
 		if (data->interrupt_flag.load()) return;
 	}
 
-	for (; (i + sizeOfBatch) < endIndex; i += sizeOfBatch) {
-		const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
+	for (; (i + sizeOfBatch - 2) < endIndex; i += sizeOfBatch - 2) {
+		const __m128i newGen = calcNewGenBatch128(i);
 
-		std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell)* sizeOfBatch);
+		std::memcpy(&grid->bufferCellAt(i + 1), ((FieldCell*)(&newGen)) + 1, sizeof(FieldCell) * (sizeOfBatch - 2));
 	}
 
 	if (i != endIndex) {
 		uint32_t remainingCells = endIndex - i;
 
-		const __m128i newGen = calcNewGenBatch128(batchData, i, batchData/*<-out param*/);
+		const __m128i newGen = calcNewGenBatch128(i);
 
-		std::memcpy(&grid->bufferCellAt(i + startOffset), ((FieldCell*)(&newGen)) + startOffset, sizeof(FieldCell)* remainingCells);
+		std::memcpy(&grid->bufferCellAt(i + 1), ((FieldCell*)(&newGen)) + 1, sizeof(FieldCell) * (remainingCells - 2));
+
 	}
 	if (data->interrupt_flag.load()) return;
 
@@ -423,8 +350,9 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	glFinish();
 	data->bufferSend.add(t2.elapsedTime());
 
-	data->generationUpdated();
-	
+	data->grid__iteration++;
+	if (data->grid__iteration % (500 + data->index) == 0) std::cout << "grid task " << data->index << ": " << data->gridUpdate.median() << ' ' << data->waiting.median() << ' ' << data->bufferSend.median() << std::endl;
+
 	gpuBufferLock_flag.store(false);
 }
 

@@ -41,9 +41,9 @@ const uint32_t windowWidth = 1920, windowHeight = 1080;
 const uint32_t windowWidth = 800, windowHeight = 800;
 #endif // FULLSCREEN
 
-const uint32_t gridWidth = 2000, gridHeight = 2000;
+const uint32_t gridWidth = 4'00, gridHeight = 4'00;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 1;
+const uint32_t numberOfTasks = 4;
 std::unique_ptr<Field> grid;
 
 const float size = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
@@ -96,7 +96,7 @@ float r2 = 0; //normalized mouseX
 
 GLuint frameBuffer, frameBufferTexture;
 
-void printMouseCoordInField();
+
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) noexcept {
 	
@@ -115,9 +115,6 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		const auto mpf = microsecPerFrame.median();
 		const auto maxfps = microsecPerFrame.max();
 		std::cout << "fps " << float(1'000'000 / (mpf)) << " (" << (mpf / 1'000) << "ms" << ", maximum: " << (maxfps / 1'000) << "ms)" << std::endl;
-	}
-	if (action == GLFW_PRESS && key == GLFW_KEY_LEFT_SHIFT) {
-		printMouseCoordInField();
 	}
 	if (key == GLFW_KEY_ESCAPE) {
 		exit(0);
@@ -188,19 +185,6 @@ vec2 mouseToGlobal() {
 	return screenToGlobal(mousePos);
 }
 
-vec2i globalAsCell(vec2 coord) {
-	float cx = coord.x;
-	float cy = coord.y;
-	int cellX = int(misc::modf(cx, gridWidth));
-	int cellY = int(misc::modf(cy, gridHeight));
-	return vec2i{ cellX, cellY };
-}
-
-void printMouseCoordInField() {
-	const auto mouseCell = globalAsCell(mouseToGlobal());
-	std::cout << "mouse cell=" << mouseCell.x << ',' << mouseCell.y << "(index=" << grid->coordAsIndex(mouseCell) <<')' << std::endl;
-}
-
 static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey) noexcept {
 	r2 = mousex / windowWidth;
 	mousePos = vec2(mousex, mousey);
@@ -244,6 +228,14 @@ vec2 globalToScreen(vec2 coord) {
 	//(x + tx - width/2f) * scale + width/2f = sx;
 
 	return vec2((coord.x * size + offset.x - windowWidth / 2.) * currentScale + windowWidth / 2., (coord.y * size + offset.y - windowHeight / 2.) * currentScale + windowHeight / 2.);
+}
+
+vec2i globalAsCell(vec2 coord) {
+	float cx = coord.x;
+	float cy = coord.y;
+	int cellX = int(misc::modf(cx, gridWidth));
+	int cellY = int(misc::modf(cy, gridHeight));
+	return vec2i{ cellX, cellY };
 }
 
 

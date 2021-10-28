@@ -109,14 +109,8 @@ vec4 colorForCoords(vec2 screenCoords) {
     vec4 cell = float(isCell) * float(!isPadding) * cellColor;
     vec4 bkg = float(isNothing) * bkgColor;
     vec4 cellPadding = float(isCell) * float(isPadding) * bkgColor;
-
-    vec4 result;
-    result = wall + cell + bkg + cellPadding;
-
-    result = mix(result, vec4(.5, .5, .5, 1), edgeMask);
-    result = mix(result, vec4(.5, .5, .5, 1), isPadding);
-
-    return result;
+    return wall + cell + bkg + cellPadding;
+    //return mix(wall + cell + bkg + cellPadding, vec4(.5, .5, .5, 1), edgeMask);
 }
 
 vec4 colorForCoordsChromaticAbberation(vec2 coord, float caIntens) {
