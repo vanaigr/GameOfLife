@@ -434,26 +434,26 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
 	glBufferSubData(GL_SHADER_STORAGE_BUFFER, data->currentOffset() + startIndex, sizeof(FieldCell) * (misc::min<uint32_t>(endIndex, grid->size) - startIndex), &grid->bufferCellAt(startIndex));
 
-	int32_t packIndex = startIndex;
-	static_assert(
-		misc::to_underlying(FieldCell::WALL) == 0b0001'0000 && 
-		misc::to_underlying(FieldCell::ALIVE) == 0b0000'0001 && 
-		misc::to_underlying(FieldCell::DEAD) == 0,
-		"required values for this kind of packing");
-	for (; packIndex < endIndex; packIndex += sizeOfBatch * 4 /*safe because of 16u*4 padding at the end of the grid*/) {
-		__m128i packedCells = _mm_set1_epi8(0);
-		for (int32_t j = 0; j < 4; j++)
-			packedCells =
-				_mm_or_si128(
-					packedCells,
-					_mm_slli_epi16(//because there is no _mm_slli_epi8
-						_mm_load_si128(reinterpret_cast<__m128i*>(&cellAt(packIndex + j * sizeOfBatch)))
-						, j
-					) 
-			);
+	//int32_t packIndex = startIndex;
+	//static_assert(
+	//	misc::to_underlying(FieldCell::WALL) == 0b0001'0000 && 
+	//	misc::to_underlying(FieldCell::ALIVE) == 0b0000'0001 && 
+	//	misc::to_underlying(FieldCell::DEAD) == 0,
+	//	"required values for this kind of packing");
+	//for (; packIndex < endIndex; packIndex += sizeOfBatch * 4 /*safe because of 16u*4 padding at the end of the grid*/) {
+	//	__m128i packedCells = _mm_set1_epi8(0);
+	//	for (int32_t j = 0; j < 4; j++)
+	//		packedCells =
+	//			_mm_or_si128(
+	//				packedCells,
+	//				_mm_slli_epi16(//because there is no _mm_slli_epi8
+	//					_mm_load_si128(reinterpret_cast<__m128i*>(&cellAt(packIndex + j * sizeOfBatch)))
+	//					, j
+	//				) 
+	//		);
 
-		glBufferSubData(GL_SHADER_STORAGE_BUFFER, data->currentOffset() + startIndex, sizeOfBatch, &packedCells);
-	}
+	//	glBufferSubData(GL_SHADER_STORAGE_BUFFER, data->currentOffset() + startIndex, sizeOfBatch, &packedCells);
+	//}
 	glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
