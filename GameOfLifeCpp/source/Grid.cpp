@@ -79,52 +79,63 @@ public:
 	}
 };
 
-struct Field::GridData {
-	UMedianCounter gridUpdate{ 500 }, waiting{ 500 }, bufferSend{ 500 };
-	unsigned int grid__iteration = 0;
+ struct Field::GridData {
+ private: static const uint32_t samples = 100;
+ public:
+	 UMedianCounter gridUpdate{ samples }, waiting{ samples }, bufferSend{ samples };
+	 unsigned int grid__iteration = 0;
 
-	uint32_t index;
+	 uint32_t index;
 
-	std::unique_ptr<FieldPimpl>& grid;
-	std::atomic_bool& interrupt_flag;
-	std::atomic_bool& gpuBufferLock_flag;
-	uint32_t startRow;
-	uint32_t rowCount;
+	 std::unique_ptr<FieldPimpl>& grid;
+	 std::atomic_bool& interrupt_flag;
+	 std::atomic_bool& gpuBufferLock_flag;
+	 uint32_t startRow;
+	 uint32_t rowCount;
 
-	GLFWwindow* offscreen_context;
-	GLuint bufferP;
-	bool& isOffset;
-	uint32_t offset;
+	 GLFWwindow* offscreen_context;
+	 GLuint bufferP;
+	 bool& isOffset;
+	 uint32_t offset;
 
-	uint32_t currentOffset() {
-		return offset * isOffset;
-	}
+	 uint32_t currentOffset() {
+		 return offset * isOffset;
+	 }
 
-public:
-	GridData(
-		uint32_t index_,
-		std::unique_ptr<FieldPimpl>& grid_,
-		std::atomic_bool& interrupt_flag_,
-		uint32_t startRow_,
-		uint32_t rowCount_,
-		GLuint bufferP_,
-		bool& isOffset_,
-		uint32_t offset_,
-		std::atomic_bool& gpuBufferLock_flag_,
-		GLFWwindow* offscreen_context_
-	) :
-		index(index_),
-		grid(grid_),
-		interrupt_flag(interrupt_flag_),
-		gpuBufferLock_flag(gpuBufferLock_flag_),
-		startRow(startRow_),
-		rowCount(rowCount_),
-		offscreen_context(offscreen_context_),
-		bufferP(bufferP_),
-		isOffset(isOffset_),
-		offset(offset_)
-	{}
-};
+	 void generationUpdated() {
+		 grid__iteration++;
+		 if (grid__iteration % (samples + index) == 0)
+			 std::cout << "grid task " << index << ": "
+			 << gridUpdate.median() << ' '
+			 << waiting.median() << ' '
+			 << bufferSend.median() << std::endl;
+	 }
+
+ public:
+	 GridData(
+		 uint32_t index_,
+		 std::unique_ptr<FieldPimpl>& grid_,
+		 std::atomic_bool& interrupt_flag_,
+		 uint32_t startRow_,
+		 uint32_t rowCount_,
+		 GLuint bufferP_,
+		 bool& isOffset_,
+		 uint32_t offset_,
+		 std::atomic_bool& gpuBufferLock_flag_,
+		 GLFWwindow* offscreen_context_
+	 ) :
+		 index(index_),
+		 grid(grid_),
+		 interrupt_flag(interrupt_flag_),
+		 gpuBufferLock_flag(gpuBufferLock_flag_),
+		 startRow(startRow_),
+		 rowCount(rowCount_),
+		 offscreen_context(offscreen_context_),
+		 bufferP(bufferP_),
+		 isOffset(isOffset_),
+		 offset(offset_)
+	 {}
+ };
 
 FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
 	const FieldCell* grid = &cellsGrid->cellAt(0);
@@ -350,8 +361,7 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	glFinish();
 	data->bufferSend.add(t2.elapsedTime());
 
-	data->grid__iteration++;
-	if (data->grid__iteration % (500 + data->index) == 0) std::cout << "grid task " << data->index << ": " << data->gridUpdate.median() << ' ' << data->waiting.median() << ' ' << data->bufferSend.median() << std::endl;
+	data->generationUpdated();
 
 	gpuBufferLock_flag.store(false);
 }
