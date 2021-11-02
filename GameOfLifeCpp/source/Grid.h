@@ -23,6 +23,14 @@ namespace fieldCell {
 	bool isDead(const FieldCell cell);
 	bool isWall(const FieldCell cell);
 	FieldCell nextGeneration(const FieldCell cell, const uint32_t aliveNegihboursCount);
+	inline constexpr char const* const asString(const FieldCell cell) {
+		switch (cell) {
+			case FieldCell::DEAD : return "dead" ;
+			case FieldCell::ALIVE: return "alive";
+			case FieldCell::WALL : return "wall" ;
+			default: return "error";
+		}
+	}
 }
 
 class Field final {
@@ -35,8 +43,8 @@ public:
 private:
 	std::unique_ptr<FieldPimpl> gridPimpl;
 	bool shouldUpdateGrid;
-	bool isStopped = false;
-	bool isFieldGPUBufferOffset = false;
+	bool isStopped;
+	bool isFieldGPUBufferWriteOffset;
 	std::atomic_bool gpuBufferLock_flag;
 
 	const uint32_t numberOfTasks;
@@ -46,7 +54,7 @@ private:
 
 	const GLuint bufferP;
 public:
-	Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP, GLFWwindow *window);
+	Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP, GLFWwindow *window, bool deployTasks);
 	~Field();
 
 	Field(Field const&) = delete;
@@ -83,16 +91,16 @@ public:
 	void stopAllGridTasks();
 	void startAllGridTasks();
 
-	bool isField2ndBuffer();
+	bool isFieldBufferWriteOffset();
 private:
 	void waitForGridTasks();
 	void deployGridTasks();
-	uint32_t currentOffset();
-	uint32_t nextOffset();
+	uint32_t currentWriteOffset();
+	uint32_t currentReadOffset();
 };
 
-inline bool Field::isField2ndBuffer() {
-	return isFieldGPUBufferOffset;
+inline bool Field::isFieldBufferWriteOffset() {
+	return isFieldGPUBufferWriteOffset;
 }
 
 

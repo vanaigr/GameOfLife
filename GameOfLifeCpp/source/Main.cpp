@@ -41,14 +41,14 @@ const uint32_t windowWidth = 1920, windowHeight = 1080;
 const uint32_t windowWidth = 800, windowHeight = 800;
 #endif // FULLSCREEN
 
-const uint32_t gridWidth = 4'00, gridHeight = 4'00;
+const uint32_t gridWidth = 2000, gridHeight = 2000;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 4;
+const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
 
 const float size = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
 
-bool gridUpdate = true;
+bool gridUpdate = false;
 
 
 std::chrono::steady_clock::time_point lastScreenUpdateTime;
@@ -96,7 +96,7 @@ float r2 = 0; //normalized mouseX
 
 GLuint frameBuffer, frameBufferTexture;
 
-
+void printMouseCellInfo();
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) noexcept {
 	
@@ -115,6 +115,9 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		const auto mpf = microsecPerFrame.median();
 		const auto maxfps = microsecPerFrame.max();
 		std::cout << "fps " << float(1'000'000 / (mpf)) << " (" << (mpf / 1'000) << "ms" << ", maximum: " << (maxfps / 1'000) << "ms)" << std::endl;
+	}
+	if (key == GLFW_KEY_LEFT_SHIFT && action == GLFW_PRESS) {
+		printMouseCellInfo();
 	}
 	if (key == GLFW_KEY_ESCAPE) {
 		exit(0);
@@ -185,6 +188,32 @@ vec2 mouseToGlobal() {
 	return screenToGlobal(mousePos);
 }
 
+vec2 globalToScreen(vec2 coord) {
+	//x = (sx - width / 2f)/scale + width / 2f - tx;
+	//(x + tx - width/2f) * scale + width/2f = sx;
+
+	return vec2((coord.x * size + offset.x - windowWidth / 2.) * currentScale + windowWidth / 2., (coord.y * size + offset.y - windowHeight / 2.) * currentScale + windowHeight / 2.);
+}
+
+vec2i globalAsCell(vec2 coord) {
+	float cx = coord.x;
+	float cy = coord.y;
+	int cellX = int(misc::modf(cx, gridWidth));
+	int cellY = int(misc::modf(cy, gridHeight));
+	return vec2i{ cellX, cellY };
+}
+
+void printMouseCellInfo() {
+	const auto mouseCellCoord = globalAsCell(mouseToGlobal());
+	const auto mouseCellIndex = grid->coordAsIndex(mouseCellCoord);
+	const auto mouseCell = grid->cellAtCoord(mouseCellCoord);
+
+	printf(
+		"mouse is at (%d; %d), index=%d (%d mod 16), cell:%s (%d)" "\n",
+		mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), mouseCell
+	);
+}
+
 static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey) noexcept {
 	r2 = mousex / windowWidth;
 	mousePos = vec2(mousex, mousey);
@@ -222,22 +251,6 @@ void window_size_callback(GLFWwindow* window, int width, int height) noexcept {
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 	glBindTexture(GL_TEXTURE_2D, 0);*/
 }
-
-vec2 globalToScreen(vec2 coord) {
-	//x = (sx - width / 2f)/scale + width / 2f - tx;
-	//(x + tx - width/2f) * scale + width/2f = sx;
-
-	return vec2((coord.x * size + offset.x - windowWidth / 2.) * currentScale + windowWidth / 2., (coord.y * size + offset.y - windowHeight / 2.) * currentScale + windowHeight / 2.);
-}
-
-vec2i globalAsCell(vec2 coord) {
-	float cx = coord.x;
-	float cy = coord.y;
-	int cellX = int(misc::modf(cx, gridWidth));
-	int cellY = int(misc::modf(cy, gridHeight));
-	return vec2i{ cellX, cellY };
-}
-
 
 void updateState() {
 	curTime = std::chrono::steady_clock::now();
@@ -322,8 +335,30 @@ void threadSendNextBuffer(BufferData &data) {
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
+
+#include <intrin.h>
+
+
 int main(void)
 {
+	//const uint32_t number = 0b11111111'11110000'110011001100'00000000u;//0b10111100'01011101'11001101'00011010u;
+	//const __m128i num = _mm_set1_epi32(number);
+	//const __m128i alive_ = _mm_set1_epi8(0b1);
+
+	//const __m128i indeces = _mm_set_epi8(0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0 ,0 ,0, 0 , 0, 0, 0b10000000);
+	//const __m128i result = _mm_shuffle_epi8(num, indeces);
+	//const __m256i a = _mm256_set1_epi32(number);
+	//_mm256_mask_shuffle_epi32(a, _mmask8)
+	//const __m128i a = _mm_setr_epi8(number, number, number, number, number, number, number, number, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8);
+	//const __m128i mask = _mm_setr_epi8(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
+	//const __m128i result = _mm_cmpeq_epi8(_mm_and_si128(a, mask), mask);
+
+	//for (uint8_t i = 0; i < 16; i++) {
+		//std::cout << uint32_t(result.m128i_i8[i] == 0 ? 0 : 1);
+	//}
+
+	//exit(0);
+
 	GLFWwindow* window;
 
 	if (!glfwInit())
@@ -390,8 +425,7 @@ int main(void)
 		return -1;
 	}
 
-	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks, ssbo, window) };
-	grid->stopAllGridTasks();
+	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks, ssbo, window, false) };
 	
 	for (size_t i = 0; i < gridSize; i++) {
 		const double freq = 0.05;
@@ -404,7 +438,7 @@ int main(void)
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
 	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size() * 2, NULL, GL_DYNAMIC_DRAW);
 	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(FieldCell) * grid->size(), grid->grid());
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size(), sizeof(FieldCell) * grid->size(), grid->grid());
+	//glBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size(), sizeof(FieldCell) * grid->size(), grid->grid());
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
@@ -501,9 +535,8 @@ int main(void)
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, !grid->isField2ndBuffer());
+			glUniform1ui(is2ndBufferP, !grid->isFieldBufferWriteOffset());
 
-			grid->grid();
 			set.add(t.elapsedTime());
 		}
 

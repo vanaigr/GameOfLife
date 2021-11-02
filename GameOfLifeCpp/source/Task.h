@@ -6,9 +6,14 @@
 #include <stdint.h>
 
 #include<iostream>
+#include<mutex>
+#include<condition_variable>
 
 static size_t counter = 0;
 
+class Data {
+
+};
 template<class Data>
 class Task
 {
@@ -18,9 +23,11 @@ public:
 	Data data;
 private:
 	void(*job)(Data&);
-	std::atomic_bool working{false}; //false - waiting, true - working
+	std::mutex startLock;
+	std::condition_variable startWork;
+	std::atomic_bool workStarted{ false }, workEnded{ false };
+
 	std::thread thread;
-	size_t index;
 	std::chrono::time_point<std::chrono::steady_clock> startTime = std::chrono::steady_clock::now();
 public:
 	Task(void(*job_)(Data&), Data data_);
@@ -38,30 +45,28 @@ private:
 template<class Data>
 void Task<Data>::task_() noexcept {
 	while (true) {
-		while (working.load() != true) { std::this_thread::sleep_for(std::chrono::microseconds(100)); } //spin
+		std::unique_lock<std::mutex> lock{ startLock };
+		while (workStarted.load() == false)
+		startWork.wait(lock , [this]() { return workStarted.load() == true; });
 		job(data);
-		//std::cout << "work ended " << index << " ms:" << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startTime).count() << std::endl;
-		startTime = std::chrono::steady_clock::now();
-		working.store(false);
+		workStarted.store(false);
+		workEnded.store(true);
 	}
 }
 
 template<class Data>
-Task<Data>::Task(void(*job_)(Data&), Data data_) : data(std::move(data_)), job(job_), thread{ &Task::task_, this } {
-	index = counter++;
-}
+Task<Data>::Task(void(*job_)(Data&), Data data_) : data(std::move(data_)), job(job_), thread{ &Task::task_, this } {}
 
 template<class Data>
 void Task<Data>::start() noexcept {
-	auto expected = false;
-	bool isSet = working.compare_exchange_strong(expected, true);
-	//std::cout << "start " << index << std::endl;
-	startTime = std::chrono::steady_clock::now();
-	assert(isSet); //can't do more than 1 task at a time
+	//std::cout << "start\n";
+	workEnded.store(false);
+	workStarted.store(true);
+	startWork.notify_all();
 }
 
 template<class Data>
 void Task<Data>::waitForResult() noexcept {
-	while (working.load() != false) {} //spin
-	//std::cout << "spin ended " << index << " ms:" << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startTime).count() << std::endl;
+	while (workEnded.load() == false) {}
+
 }

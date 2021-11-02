@@ -111,11 +111,11 @@ public:
 
 	 GLFWwindow* offscreen_context;
 	 GLuint bufferP;
-	 bool& isOffset;
+	 bool& isWriteOffset;
 	 uint32_t offset;
 
-	 uint32_t currentOffset() {
-		 return offset * isOffset;
+	 uint32_t currentWriteOffset() {
+		 return offset * isWriteOffset;
 	 }
 
 	 void generationUpdated() {
@@ -148,12 +148,12 @@ public:
 		 endBatch  (endBatch_),
 		 offscreen_context(offscreen_context_),
 		 bufferP(bufferP_),
-		 isOffset(isOffset_),
+		 isWriteOffset(isOffset_),
 		 offset(offset_)
 	 {}
  };
 
-FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
+static FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
 	const FieldCell* grid = &cellsGrid->cellAt(0);
 	const auto width = cellsGrid->width;
 	const auto height = cellsGrid->height;
@@ -180,7 +180,8 @@ FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::FieldPim
 	return cell;
 }
 
-void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
+
+static void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	Timer<> t{};
 	auto& grid = data->grid;
 	const int32_t width = static_cast<int32_t>(grid->width);
@@ -204,13 +205,13 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 		uint32_t index,
 		remainder& currentRemainder_out
 		) -> __m128i {
-		static_assert(sizeOfBatch > 1, "sizeOfBatch of 0, 1, 2 doesnt make sense");
-		const auto cellAt = [&grid](uint32_t index) -> FieldCell& { return grid->cellAt(index); }; 
+		static_assert(sizeOfBatch > 1, "sizeOfBatch = 0, 1 doesnt make sense");
+		const auto cellAt = [&grid](uint32_t index) -> FieldCell& { return grid->cellAt(index); };
 		const auto width = grid->width;
 
 		static_assert(sizeof FieldCell == 1, "size of field cell must be 1 byte");
 		const __m128i topCellRow_ = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index - width)));
-		const __m128i curCellRow_ = _mm_load_si128(reinterpret_cast<__m128i*>(&cellAt(index)));
+		const __m128i curCellRow_ = _mm_load_si128 (reinterpret_cast<__m128i*>(&cellAt(index        )));
 		const __m128i botCellRow_ = _mm_loadu_si128(reinterpret_cast<__m128i*>(&cellAt(index + width)));
 
 		//if ((uintptr_t(&cellAt(index)) & 0xf) != 0) std::cout << "(sick!)" << (uintptr_t(&cellAt(index)) & 0xf) << std::endl;
@@ -218,10 +219,10 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 		const __m128i cellsInCols_ = _mm_add_epi8(topCellRow_, _mm_add_epi8(curCellRow_, botCellRow_));
 
 		currentRemainder_out.cellsCols = cellsInCols_.m128i_i16[7];
-		currentRemainder_out.curCell    = curCellRow_ .m128i_i8[15];
+		currentRemainder_out.curCell   = curCellRow_ .m128i_i8 [15];
 
 
-		const __m128i cells3by3Neighbours =
+		const __m128i cells3by3 =
 			_mm_add_epi8(
 				_mm_add_epi8(
 					_mm_slli_si128(cellsInCols_, 1),
@@ -234,10 +235,16 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 					_mm_set1_epi16(previousRemainder.cellsCols + (previousRemainder.cellsCols >> 8))
 					, 14
 				)
-			); static_assert((misc::to_underlying(FieldCell::WALL) & 0b1111) == 0, "adding neighbours together requires 4 bottom bits");
-		const __m128i curCellRow  = _mm_add_epi8(_mm_slli_si128(curCellRow_ , 1), _mm_srli_si128(_mm_set1_epi8(previousRemainder.curCell       ), 15));
+			); static_assert(
+				static_cast<uint16_t>(misc::to_underlying(FieldCell::WALL)) * 9 == misc::to_underlying(FieldCell::WALL) * 9 &&
+				static_cast<uint16_t>(misc::to_underlying(FieldCell::ALIVE)) * 9 == misc::to_underlying(FieldCell::ALIVE) * 9 &&
+				(((misc::to_underlying(FieldCell::WALL)) * 9) & (misc::to_underlying(FieldCell::ALIVE) * 9)) == 0
+				, "when adding 9 cells together there should be no overflows, and no inersections between number of alive cells and number of walls"
+
+				);
+		const __m128i curCellRow = _mm_add_epi8(_mm_slli_si128(curCellRow_, 1), _mm_srli_si128(_mm_set1_epi8(previousRemainder.curCell), 15));
 		const __m128i cellsInCols = _mm_add_epi8(_mm_slli_si128(cellsInCols_, 1), _mm_srli_si128(_mm_set1_epi8(previousRemainder.cellsCols >> 8), 15));
-		
+
 
 		/*std::cout << "here:" << (_mm_movemask_epi8(
 			_mm_cmpeq_epi8(
@@ -251,53 +258,62 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 			_mm_movemask_epi8(
 				_mm_set1_epi32(0xffffffff)
 			)) << std::endl;*/
-		//printed "here:1"
-		//why setr and not just set?
-		/* actualy:
-		intel intrinsics website: __m128i _mm_setr_epi16(short e7 , short e6 , short e5 , short e4 , short e3 , short e2 , short e1 , short e0 )
-		visual studio hint      : __m128i _mm_setr_epi16(short _W0, short _W1, short _W2, short _W3, short _W4, short _W5, short _W6, short _W7)
+			//printed "here:1"
+			//why setr and not just set?
+			/* actualy:
+			intel intrinsics website: __m128i _mm_setr_epi16(short e7 , short e6 , short e5 , short e4 , short e3 , short e2 , short e1 , short e0 )
+			visual studio hint      : __m128i _mm_setr_epi16(short _W0, short _W1, short _W2, short _W3, short _W4, short _W5, short _W6, short _W7)
 
-		action performed:
-		dst[15:0] := e7
-		dst[31:16] := e6
-		dst[47:32] := e5
-		dst[63:48] := e4
-		dst[79:64] := e3
-		dst[95:80] := e2
-		dst[111:96] := e1
-		dst[127:112] := e0
+			action performed:
+			dst[15:0] := e7
+			dst[31:16] := e6
+			dst[47:32] := e5
+			dst[63:48] := e4
+			dst[79:64] := e3
+			dst[95:80] := e2
+			dst[111:96] := e1
+			dst[127:112] := e0
 
-		why intel's "e7" corresponds to hint's "_W0"?
-		*/
+			why intel's "e7" corresponds to hint's "_W0"?
+			*/
 
 
+		static_assert(((
+			(misc::to_underlying(FieldCell::ALIVE) + misc::to_underlying(FieldCell::WALL)) * 8)
+			& 0b0000'1111) == misc::to_underlying(FieldCell::ALIVE) * 8, "we need to be able to remove all the walls from 3by3 sum of cells");
 		const __m128i lowerFourMask = _mm_set1_epi8(0b1111);
-		const __m128i cellsActualNeighboursAlive = _mm_and_si128(_mm_sub_epi8(cells3by3Neighbours, curCellRow), lowerFourMask);
-
+		const __m128i cellsNeighboursAlive = _mm_and_si128(_mm_sub_epi8(cells3by3, curCellRow), lowerFourMask);
+		
 		const __m128i wallCell = _mm_set1_epi8(misc::to_underlying(FieldCell::WALL));
 		const __m128i deadCell = _mm_set1_epi8(misc::to_underlying(FieldCell::DEAD));
 		const __m128i aliveCell = _mm_set1_epi8(misc::to_underlying(FieldCell::ALIVE));
-		static_assert((misc::to_underlying(FieldCell::ALIVE)) == 1, "");
+		static_assert((misc::to_underlying(FieldCell::ALIVE)& misc::to_underlying(FieldCell::WALL)) == 0, "must not have intersections");
 
+
+		const __m128i isWall = _mm_cmpeq_epi8(curCellRow, wallCell);
 		const __m128i wallsBit = _mm_and_si128(curCellRow, wallCell);
 		const __m128i isDead_lowerBit = _mm_andnot_si128(curCellRow, aliveCell); static_assert(
-			(misc::to_underlying(FieldCell::ALIVE) & ~misc::to_underlying(FieldCell::DEAD)) == 1
-			, "");
+			(~misc::to_underlying(FieldCell::DEAD)& misc::to_underlying(FieldCell::ALIVE)) == misc::to_underlying(FieldCell::ALIVE) &&
+			(~misc::to_underlying(FieldCell::ALIVE) & misc::to_underlying(FieldCell::ALIVE)) == 0
+			, "need to be able to turn dead into living ones");
 		const __m128i isAlive_lowerBit = curCellRow;
-		const __m128i is2Alive = _mm_cmpeq_epi8(cellsActualNeighboursAlive, _mm_set1_epi8(2));
-		const __m128i is3Alive = _mm_cmpeq_epi8(cellsActualNeighboursAlive, _mm_set1_epi8(3));
+		const __m128i is2Alive = _mm_cmpeq_epi8(cellsNeighboursAlive, _mm_set1_epi8(2));
+		const __m128i is3Alive = _mm_cmpeq_epi8(cellsNeighboursAlive, _mm_set1_epi8(3));
 
 		const __m128i newGen =
 			_mm_or_si128(
 				wallsBit,
-				_mm_or_si128(
-					_mm_and_si128(
-						isAlive_lowerBit,
-						_mm_or_si128(is2Alive, is3Alive)
-					),
-					_mm_and_si128(
-						isDead_lowerBit,
-						is3Alive
+				_mm_andnot_si128(
+					isWall,
+					_mm_or_si128(
+						_mm_and_si128(
+							isAlive_lowerBit,
+							_mm_or_si128(is2Alive, is3Alive)
+						),
+						_mm_and_si128(
+							isDead_lowerBit,
+							is3Alive
+						)
 					)
 				)
 			);
@@ -335,7 +351,7 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 		if (data->interrupt_flag.load()) return;
 	}
 
-	for (; (i + sizeOfBatch) < endIndex; i += sizeOfBatch) {
+	for (; i < endIndex; i += sizeOfBatch) {
 		const __m128i newGen = calcNewGenBatch128(previousRemainder, i + 1, previousRemainder/*out param*/);
 
 		std::memcpy(&grid->bufferCellAt(i), ((FieldCell*)(&newGen)), sizeof(FieldCell) * sizeOfBatch);
@@ -432,7 +448,7 @@ void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
 	const auto bufferP = data->bufferP;
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, data->currentOffset() + startIndex, sizeof(FieldCell) * (misc::min<uint32_t>(endIndex, grid->size) - startIndex), &grid->bufferCellAt(startIndex));
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, data->currentWriteOffset() + startIndex, sizeof(FieldCell) * (misc::min<uint32_t>(endIndex, grid->size) - startIndex), &grid->bufferCellAt(startIndex));
 
 	//int32_t packIndex = startIndex;
 	//static_assert(
@@ -471,13 +487,15 @@ FieldCell* Field::grid() {
 	return &this->gridPimpl->cellAt(0);
 }
 
-Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP_, GLFWwindow* window) :
+Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP_, GLFWwindow* window, bool deployTasks) :
+	isFieldGPUBufferWriteOffset{ true }, 
 	gridPimpl{ new FieldPimpl(gridWidth, gridHeight) },
 	shouldUpdateGrid(true),
 	numberOfTasks(numberOfTasks_),
 	gridTasks{ new std::unique_ptr<Task<std::unique_ptr<GridData>>>[numberOfTasks_] },
 	indecesToBrokenCells{ },
-	bufferP{ bufferP_ }
+	bufferP{ bufferP_ },
+	isStopped{ deployTasks == false }
 {
 	assert(numberOfTasks >= 1);
 
@@ -526,7 +544,7 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t n
 						startBatch,
 						endBatch,
 						bufferP,
-						isFieldGPUBufferOffset,
+						isFieldGPUBufferWriteOffset,
 						size(),
 						gpuBufferLock_flag,
 						taskWindow
@@ -535,9 +553,6 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t n
 			}
 		);
 	};
-
-	//uint32_t rowsBefore = 0;
-	//uint32_t remainingRows = height();
 
 	uint32_t batchesBefore = 0;
 	uint32_t remainingBatches = misc::roundUpIntTo(size(), sizeOfBatch) / sizeOfBatch;
@@ -568,20 +583,17 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t n
 		remainingBatches -= numberOfBatches;
 	}
 
-	assert(remainingRows == 0);
-	assert(rowsBefore == height());
-
 	deployGridTasks();
 
 }
 Field::~Field() = default;
 
-uint32_t Field::currentOffset() {
-	return size() * isFieldGPUBufferOffset;
+uint32_t Field::currentWriteOffset() {
+	return size() * isFieldGPUBufferWriteOffset;
 }
 
-uint32_t Field::nextOffset() {
-	return size() * !isFieldGPUBufferOffset;
+uint32_t Field::currentReadOffset() {
+	return size() * !isFieldGPUBufferWriteOffset;
 }
 
 void Field::fill(const FieldCell cell) {
@@ -597,7 +609,7 @@ void Field::fill(const FieldCell cell) {
 	deployGridTasks();
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, nextOffset() + 0, sizeof(FieldCell) * size(), &gridPimpl->cellAt(0));
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentReadOffset() + 0, sizeof(FieldCell) * size(), &gridPimpl->cellAt(0));
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
@@ -611,7 +623,7 @@ void Field::setCellAtIndex(const uint32_t index, FieldCell cell) {
 	if (gridCell != cell) {
 		gridCell = cell;
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
-		glBufferSubData(GL_SHADER_STORAGE_BUFFER, nextOffset() + index, sizeof(FieldCell), &gridPimpl->cellAt(index));
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentReadOffset() + index, sizeof(FieldCell), &cell);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 		if (!isStopped) {
@@ -646,7 +658,7 @@ void Field::updateGeneration() {
 					int offsetedIndex = x + width() * y;
 					const auto newCell = updatedCell(offsetedIndex, gridPimpl);
 					gridPimpl->bufferCellAt(offsetedIndex) = newCell;
-					glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentOffset() + offsetedIndex, sizeof(FieldCell), &gridPimpl->bufferCellAt(offsetedIndex));
+					glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentWriteOffset() + offsetedIndex, sizeof(FieldCell), &newCell);
 				}
 			}
 
@@ -659,7 +671,7 @@ void Field::updateGeneration() {
 
 	gridPimpl->prepareNext();
 	shouldUpdateGrid = true;
-	isFieldGPUBufferOffset = !isFieldGPUBufferOffset;
+	isFieldGPUBufferWriteOffset = !isFieldGPUBufferWriteOffset;
 	interrupt_flag.store(false);
 
 	deployGridTasks();
