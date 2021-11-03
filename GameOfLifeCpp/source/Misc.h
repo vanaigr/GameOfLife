@@ -4,6 +4,7 @@
 #include "Vector.h"
 #include <cassert>
 
+#define print_msg(msg) { std::cout << (msg) << std::endl; }
 namespace misc {
     template<class T>
     constexpr T lerp(T a, T b, T f) noexcept {

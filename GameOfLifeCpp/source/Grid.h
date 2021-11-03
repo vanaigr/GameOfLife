@@ -14,20 +14,17 @@
 enum class FieldCell : uint8_t
 {
 	DEAD = 0,
-	ALIVE = 1,
-	WALL = 0b10000
+	ALIVE = 1
 };
 
 namespace fieldCell {
 	bool isAlive(const FieldCell cell);
 	bool isDead(const FieldCell cell);
-	bool isWall(const FieldCell cell);
 	FieldCell nextGeneration(const FieldCell cell, const uint32_t aliveNegihboursCount);
 	inline constexpr char const* const asString(const FieldCell cell) {
 		switch (cell) {
 			case FieldCell::DEAD : return "dead" ;
 			case FieldCell::ALIVE: return "alive";
-			case FieldCell::WALL : return "wall" ;
 			default: return "error";
 		}
 	}
@@ -86,7 +83,8 @@ public:
 	uint32_t height() const;
 	uint32_t size() const;
 
-	FieldCell* grid();
+	uint32_t size_bytes() const;
+	uint32_t *rawData() const;
 
 	void stopAllGridTasks();
 	void startAllGridTasks();

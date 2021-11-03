@@ -65,15 +65,7 @@ vec2 desiredOffset(0, 0), offset = desiredOffset;
 
 float lensDistortion = -0.17;
 
-
-enum class BrushMode : bool {
-	CELL,
-	WALL
-};
-
 int32_t brushSize = 0;
-BrushMode brushMode = BrushMode::CELL;
-
 
 bool pan = false;
 enum class PaintMode : unsigned char {
@@ -128,15 +120,6 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		if (key == GLFW_KEY_ENTER) {
 			grid->fill(FieldCell::DEAD);
 		}
-		else if (key == GLFW_KEY_1) {
-			brushMode = BrushMode::CELL;
-		}
-		else if (key == GLFW_KEY_2) {
-			brushMode = BrushMode::WALL;
-		}
-		/*else if (key == 51) {
-			mode = 2;
-		}*/
 		else if (key == GLFW_KEY_SPACE) { //sace
 			gridUpdate = !gridUpdate;
 		}
@@ -263,8 +246,7 @@ void updateState() {
 			const vec2i offset{ xo, yo };
 			const auto coord = cell + offset;
 			if (paintMode == PaintMode::PAINT) {
-				if (brushMode == BrushMode::WALL) grid->setCellAtCoord(coord, FieldCell::WALL);
-				else if (brushMode == BrushMode::CELL && grid->cellAtCoord(coord) != FieldCell::WALL) grid->setCellAtCoord(cell, FieldCell::ALIVE);
+				grid->setCellAtCoord(cell, FieldCell::ALIVE);
 			}
 			else if (paintMode == PaintMode::DELETE) {
 				grid->setCellAtCoord(coord + offset, FieldCell::DEAD);
@@ -319,46 +301,8 @@ struct BufferData {
 	}
 };
 
-void threadSendNextBuffer(BufferData &data) {
-	GLFWwindow *window = data.offscreen_context;
-	if (!window) {
-		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-		data.offscreen_context = glfwCreateWindow(2, 2, "", NULL, NULL);
-		window = data.offscreen_context;
-		glfwMakeContextCurrent(window);
-	}
-
-	const auto bufferP = data.bufferP;
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, data.currentOffset(), sizeof(FieldCell) * grid->size(), grid->grid());
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-}
-
-
-#include <intrin.h>
-
-
 int main(void)
 {
-	//const uint32_t number = 0b11111111'11110000'110011001100'00000000u;//0b10111100'01011101'11001101'00011010u;
-	//const __m128i num = _mm_set1_epi32(number);
-	//const __m128i alive_ = _mm_set1_epi8(0b1);
-
-	//const __m128i indeces = _mm_set_epi8(0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0 ,0 ,0, 0 , 0, 0, 0b10000000);
-	//const __m128i result = _mm_shuffle_epi8(num, indeces);
-	//const __m256i a = _mm256_set1_epi32(number);
-	//_mm256_mask_shuffle_epi32(a, _mmask8)
-	//const __m128i a = _mm_setr_epi8(number, number, number, number, number, number, number, number, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8, number >> 8);
-	//const __m128i mask = _mm_setr_epi8(1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128);
-	//const __m128i result = _mm_cmpeq_epi8(_mm_and_si128(a, mask), mask);
-
-	//for (uint8_t i = 0; i < 16; i++) {
-		//std::cout << uint32_t(result.m128i_i8[i] == 0 ? 0 : 1);
-	//}
-
-	//exit(0);
-
 	GLFWwindow* window;
 
 	if (!glfwInit())
@@ -436,9 +380,8 @@ int main(void)
 	grid->startAllGridTasks();
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size() * 2, NULL, GL_DYNAMIC_DRAW);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(FieldCell) * grid->size(), grid->grid());
-	//glBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size(), sizeof(FieldCell) * grid->size(), grid->grid());
+	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(grid->size_bytes() * 2, 4), NULL, GL_DYNAMIC_DRAW);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, grid->size_bytes(), grid->rawData());
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
@@ -461,7 +404,7 @@ int main(void)
 	GLint mousePosP = glGetUniformLocation(programId, "mousePos");
 
 	GLint is2ndBufferP = glGetUniformLocation(programId, "is2ndBuffer");
-
+	glUniform1ui(glGetUniformLocation(programId, "bufferOffset_bytes"), grid->size_bytes());
 
 	glActiveTexture(GL_TEXTURE0);
 	glGenTextures(1, &frameBufferTexture);
@@ -517,7 +460,9 @@ int main(void)
 	lastGridUpdateTime = lastScreenUpdateTime = curTime = std::chrono::steady_clock::now();
 
 	auto tim = std::chrono::steady_clock::now();
+
 	
+
 	while (!glfwWindowShouldClose(window))
 	{
 		glUseProgram(programId);
