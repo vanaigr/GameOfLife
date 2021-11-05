@@ -41,7 +41,7 @@ const uint32_t windowWidth = 1920, windowHeight = 1080;
 const uint32_t windowWidth = 800, windowHeight = 800;
 #endif // FULLSCREEN
 
-const uint32_t gridWidth = 2'000, gridHeight = 2'000;
+const uint32_t gridWidth = 10'000, gridHeight = 10'000;
 const uint32_t gridSize = gridWidth * gridHeight;
 const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;

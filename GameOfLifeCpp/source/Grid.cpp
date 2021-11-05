@@ -100,7 +100,6 @@ public:
 			width_int * sizeOfUint32); //end pading
 
 		if (edgeCellsOptimization) {
-			AutoTimer<> t{ "edge cells update" };
 			const uint32_t firstEmptyCellInColIndex_int = width_grid / batchSize;
 			const uint32_t firstEmptyCellIndexInBatch   = width_grid % batchSize;
 
@@ -341,14 +340,13 @@ public:
 		 ) -> uint32_t {
 			 const auto isCellAlive = [&grid](uint32_t index) -> bool { return grid->isCellAlive(index); };
 			 const auto put32At4Bits = [](const uint32_t number) -> __m128i {
-				 const __m128i indecesLower = _mm_slli_si128(_mm_set1_epi8(1), 8); // lower->higher: 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 
+				 const __m128i indecesLower = _mm_slli_si128(_mm_set1_epi8(1), 8); // lower...higher: 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 
 				 const __m128i indecesHigher = _mm_add_epi8(indecesLower, _mm_set1_epi8(2));
 
 				 const __m128i num = _mm_set1_epi32(number);
 
 				 const auto extract4BitsAndMask = [](
-					 const __m128i num,
-					 const  uint8_t bi1, const  uint8_t bi2, const  uint8_t bi3, const uint8_t bi4, const uint8_t bitMask, const __m128i indeces
+					 const __m128i num, const uint8_t bitMask, const __m128i indeces
 					 ) -> __m128i {
 					 const auto high_low_bytesToLontTo128 = [](const uint8_t b1, const uint8_t b2, const  uint8_t b3, const uint8_t b4,
 						 const uint8_t b5, const uint8_t b6, const  uint8_t b7, const uint8_t b8) -> __m128i {
@@ -379,8 +377,8 @@ public:
 				 };
 
 
-				 const __m128i resultlower4 = extract4BitsAndMask(num, 0, 2, 4, 6, 0b1, indecesLower);
-				 const __m128i resultHigher4 = extract4BitsAndMask(num, 1, 3, 5, 7, 0b1 << 4, indecesHigher);
+				 const __m128i resultlower4 = extract4BitsAndMask(num, 0b1, indecesLower);
+				 const __m128i resultHigher4 = extract4BitsAndMask(num, 0b1 << 4, indecesHigher);
 
 				 return _mm_or_si128(resultlower4, resultHigher4);
 			 };
@@ -402,8 +400,11 @@ public:
 				 const __m128i maskLower4 = _mm_set1_epi8(0b00000001u);
 				 const __m128i maskHigher4 = _mm_set1_epi8(0b00010000u);
 
-				 uint32_t lower16{ static_cast<std::make_unsigned<int>::type>(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(bits4, maskLower4), maskLower4))) };
+				 uint32_t lower16 { static_cast<std::make_unsigned<int>::type>(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(bits4, maskLower4 ), maskLower4 ))) };
 				 uint32_t higher16{ static_cast<std::make_unsigned<int>::type>(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(bits4, maskHigher4), maskHigher4))) };
+				 /*
+				 faster than _mm_slli_epi16(bits4, 7) for lower bits and _mm_slli_epi16(bits4, 3) for higher
+				 */
 
 				 return lower16 | (higher16 << 16);
 			 };
@@ -516,7 +517,7 @@ public:
 			 << 8
 			 ),
 		 isCell(i_a())
-	 };
+	 }; //out of bounds, paddint of width + 1 required
 
 	 uint64_t newGenWindow = 0;
 	 for (const uint32_t j_count = 8; (i_batch + j_count) < endBatch + 1;) { //endIndex + 1 is because of last celll is not updated
@@ -537,89 +538,86 @@ public:
 		 grid->getCellsActual_int<Field::FieldPimpl::buffer>(i_batch - 1) = uint32_t(newGenWindow);
 	 }
 
-
 	 if (data->interrupt_flag.load()) return;
 
 	 const uint32_t startRow = startIndex / width_actual;
 	 const uint32_t endRow = misc::min<uint32_t>(misc::intDivCeil(endIndex + 1, width_actual), height);
 
 	 if (grid->edgeCellsOptimization == false) {
-		 std::cerr << "cells optimisation if off!";
-		 exit(-1);
-	 }
-	 /*{
-		 uint8_t //top/cur/bot + first/second/last
-			 tf = isCell(-width_grid),
-			 ts = isCell(-width_grid + 1),
-			 tl = isCell(-width_grid + lastElement),
-			 cf = isCell(0),
-			 cs = isCell(1),
-			 cl = isCell(lastElement);
+		 {
+			 uint8_t //top/cur/bot + first/second/last
+				 tf = isCell(-width_grid),
+				 ts = isCell(-width_grid + 1),
+				 tl = isCell(-width_grid + lastElement),
+				 cf = isCell(0),
+				 cs = isCell(1),
+				 cl = isCell(lastElement);
 
-		 for (uint32_t rowIndex = startRow; rowIndex < endRow; rowIndex++) {
-			 const uint32_t row = rowIndex * width_grid;
+			 for (uint32_t rowIndex = startRow; rowIndex < endRow; rowIndex++) {
+				 const uint32_t row = rowIndex * width_grid;
 
-			 uint8_t
-				 bf = isCell(row + width_grid),
-				 bs = isCell(row + width_grid + 1),
-				 bl = isCell(row + width_grid + lastElement);
-			 //first element
-			 {
-				 const int index = row;
-				 const auto curCell = cellAt(index);
-				 const unsigned char    topRowNeighbours = tf + ts + tl;
-				 const unsigned char bottomRowNeighbours = bf + bs + bl;
-				 const unsigned char aliveNeighbours = topRowNeighbours + cl + cs + bottomRowNeighbours;
+				 uint8_t
+					 bf = isCell(row + width_grid),
+					 bs = isCell(row + width_grid + 1),
+					 bl = isCell(row + width_grid + lastElement);
+				 //first element
+				 {
+					 const int index = row;
+					 const auto curCell = cellAt(index);
+					 const unsigned char    topRowNeighbours = tf + ts + tl;
+					 const unsigned char bottomRowNeighbours = bf + bs + bl;
+					 const unsigned char aliveNeighbours = topRowNeighbours + cl + cs + bottomRowNeighbours;
 
-				 setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
+					 setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
+				 }
+
+				 tf = cf;
+				 ts = cs;
+				 tl = cl;
+				 cf = bf;
+				 cs = bs;
+				 cl = bl;
 			 }
-
-			 tf = cf;
-			 ts = cs;
-			 tl = cl;
-			 cf = bf;
-			 cs = bs;
-			 cl = bl;
 		 }
-	 }
-	 if (data->interrupt_flag.load()) return;
+		 if (data->interrupt_flag.load()) return;
 
-	 {
-		 uint8_t //top/cur/bot + first/last/pre-last
-			 tf = isCell(-width_grid),
-			 tl = isCell(-width_grid + lastElement),
-			 tp = isCell(-width_grid + lastElement - 1),
-			 cf = isCell(0),
-			 cl = isCell(lastElement),
-			 cp = isCell(lastElement - 1);
+		 {
+			 uint8_t //top/cur/bot + first/last/pre-last
+				 tf = isCell(-width_grid),
+				 tl = isCell(-width_grid + lastElement),
+				 tp = isCell(-width_grid + lastElement - 1),
+				 cf = isCell(0),
+				 cl = isCell(lastElement),
+				 cp = isCell(lastElement - 1);
 
-		 for (uint32_t rowIndex = startRow; rowIndex < endRow; rowIndex++) {
-			 const uint32_t row = rowIndex * width_grid;
+			 for (uint32_t rowIndex = startRow; rowIndex < endRow; rowIndex++) {
+				 const uint32_t row = rowIndex * width_grid;
 
-			 uint8_t
-				 bf = isCell(row + width_grid),
-				 bp = isCell(row + width_grid + lastElement - 1),
-				 bl = isCell(row + width_grid + lastElement);
+				 uint8_t
+					 bf = isCell(row + width_grid),
+					 bp = isCell(row + width_grid + lastElement - 1),
+					 bl = isCell(row + width_grid + lastElement);
 
-			 { //last element
-				 const int index = row + lastElement;
-				 const auto curCell = cellAt(index);
-				 const unsigned char    topRowNeighbours = tp + tl + tf;
-				 const unsigned char bottomRowNeighbours = bp + bl + bf;
-				 const unsigned char aliveNeighbours = topRowNeighbours + cp + cf + bottomRowNeighbours;
+				 { //last element
+					 const int index = row + lastElement;
+					 const auto curCell = cellAt(index);
+					 const unsigned char    topRowNeighbours = tp + tl + tf;
+					 const unsigned char bottomRowNeighbours = bp + bl + bf;
+					 const unsigned char aliveNeighbours = topRowNeighbours + cp + cf + bottomRowNeighbours;
 
-				 setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
+					 setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
+				 }
+
+				 tf = cf;
+				 tp = cp;
+				 tl = cl;
+				 cf = bf;
+				 cp = bp;
+				 cl = bl;
 			 }
-
-			 tf = cf;
-			 tp = cp;
-			 tl = cl;
-			 cf = bf;
-			 cp = bp;
-			 cl = bl;
 		 }
+		 if (data->interrupt_flag.load()) return;
 	 }
-	 if (data->interrupt_flag.load()) return;*/
 
 	 data->gridUpdate.add(t.elapsedTime());
 
@@ -674,10 +672,9 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t n
 {
 	assert(numberOfTasks >= 1);
 
-	//grid__.median() == 35 ms, bufferSend__.median() == 110 ms.In my case
-	//const double fraction = 35.0 / 110.0; // fractionOfWorkTimeToSendData
-
-	const double fraction = .1; // fractionOfWorkTimeToSendData
+	//grid update == 50 ms, buffer send == 4 ms.In my case
+	//4 / 50 ~= 1 / 20 
+	const double fraction = .05; // fractionOfWorkTimeToSendData
 	static_assert(true, ""/*
 	find amountOfWorkT1. given fraction, workload (total batches)
 	amountOfWorkT1 — percent of work;
