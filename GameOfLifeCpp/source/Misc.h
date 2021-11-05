@@ -4,7 +4,20 @@
 #include "Vector.h"
 #include <cassert>
 
+
+
+
 #define print_msg(msg) { std::cout << (msg) << std::endl; }
+
+#include<iostream>
+#include<mutex>
+static std::mutex m{};
+
+inline void print(const char* msg, uint32_t arg) {
+    std::lock_guard<std::mutex> g{ m };
+    std::cout << msg << arg << std::endl;
+}
+
 namespace misc {
     template<class T>
     constexpr T lerp(T a, T b, T f) noexcept {
@@ -16,7 +29,10 @@ namespace misc {
         return (f - a) / (b - a);
     }
 
-    extern constexpr vec2 vec2lerp(vec2 a, vec2 b, float f) noexcept;
+    template<class C>
+    inline constexpr vec2<C> vec2lerp(const vec2<C> a, const vec2<C> b, const C f) noexcept {
+        return vec2<C>(misc::lerp(a.x, b.x, f), misc::lerp(a.y, b.y, f));
+    }
 
     template <typename E>
     constexpr inline typename std::underlying_type<E>::type to_underlying(const E e) noexcept {

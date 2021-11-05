@@ -13,7 +13,9 @@ out vec4 color;
 
 uniform float deltaScaleChange;
 uniform vec2 deltaOffsetChange;
-uniform float currentScale;
+uniform double size;
+
+uniform float lensDistortion;
 
 vec4 colorForCoords(vec2 coord) {
     return texture2D(frameBuffer, coord / textureSize);
@@ -32,15 +34,17 @@ vec2 applyLensDistortion(vec2 coord, float intensity) {
 }
 
 
-vec4 colorForCoordsChromaticAbberation(vec2 coord, float caIntens) {
-    vec2 newCoord = applyLensDistortion(coord, caIntens);
+vec4 colorForCoordsChromaticAbberation(dvec2 coord, float caIntens) {
+    vec2 newCoord = applyLensDistortion(vec2(coord), caIntens);
     return colorForCoords(newCoord);
 }
 
 vec4 col(vec2 coord) {
-    float red = colorForCoordsChromaticAbberation(coord - deltaOffsetChange.x / 15.0 * currentScale, 0).r;
-    float green = colorForCoordsChromaticAbberation(coord, -0.004 - deltaScaleChange / 12.0).g;
-    float blue = colorForCoordsChromaticAbberation(coord + deltaOffsetChange.y / 15.0 * currentScale, -0.004 - deltaScaleChange / 12.0).b;
+    vec2 distortedCoord = coord;// applyLensDistortion(coord, lensDistortion + (deltaScaleChange / 5.0));
+
+    float red = colorForCoordsChromaticAbberation(distortedCoord, 0).r;
+    float green = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 15.0 / size, -0.004 - deltaScaleChange / 9.0).g;
+    float blue = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 15.0 / size, -0.004 - deltaScaleChange / 9.0).b;
 
     return vec4(red, green, blue, 1.0);
 }

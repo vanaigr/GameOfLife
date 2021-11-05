@@ -5,10 +5,11 @@ precision mediump float;
 precision mediump int;
 #endif
 
-uniform float currentScale;
-uniform float size;
-uniform float tx;
-uniform float ty;
+uniform double size;
+uniform dvec2 pos;
+
+uniform float cellSize_px;
+
 
 uniform float deltaScaleChange;
 //uniform vec2 deltaOffsetChange;
@@ -55,7 +56,7 @@ layout(origin_upper_left) in vec4 gl_FragCoord;
 out vec4 color;
 
 vec2 distortedScreenToGlobal(vec2 coord) {
-    return vec2(((coord.x - width / 2f) / currentScale + width / 2f - tx) / size, ((coord.y - height / 2f) / currentScale + height / 2f - ty) / size);
+    return vec2(((coord.x - width / 2.0) * size + width / 2.0 + pos.x) / cellSize_px, ((coord.y - height / 2.0) * size + height / 2.0 + pos.y) / cellSize_px);
 }
 
 ivec2 globalAsCell(vec2 coord) {
@@ -126,16 +127,7 @@ vec4 colorForCoordsChromaticAbberation(vec2 coord, float caIntens) {
 }
 
 vec4 col(vec2 coord) {
-    //float v = vignette(coord, 0.97, 1, 1);
-
     vec2 distortedCoord = applyLensDistortion(coord, lensDistortion + (deltaScaleChange / 5));
-
-    ////colorForCoords
-    //float red = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 32.0 * currentScale, -0.002 + deltaScaleChange / 10.0).r;
-    //float green = colorForCoordsChromaticAbberation(distortedCoord, 0).g;
-    //float blue = colorForCoordsChromaticAbberation(distortedCoord + deltaOffsetChange / 32.0 * currentScale, 0.002 - deltaScaleChange / 10.0).b;
-
-    //return vec4(red, green, blue, 1.0) * (1.0 - v);//colorForCoords(distortedCoord);
 
     return colorForCoords(distortedCoord);
 }

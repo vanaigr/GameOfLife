@@ -2,34 +2,41 @@
 
 #include<stdint.h>
 
+template<typename C>
 struct vec2
 {
-	float x, y;
+	C x, y;
 
 public:
-	constexpr vec2(const float x_, const float y_) : x(x_), y(y_) {};
+	constexpr vec2(const C x_, const C y_) : x(x_), y(y_) {};
 
-	inline constexpr vec2 operator+(const vec2& o) const {
+	inline constexpr vec2<C> operator+(const vec2<C>& o) const {
 		return vec2(x + o.x, y + o.y);
 	}
-	inline constexpr vec2 operator-(const vec2& o) const {
+	inline constexpr vec2<C> operator-(const vec2<C>& o) const {
 		return vec2(x - o.x, y - o.y);
 	}
-	inline constexpr vec2 operator/(const vec2& o) const {
+	inline constexpr vec2<C> operator/(const vec2<C>& o) const {
 		return vec2(x / o.x, y / o.y);
 	}
-	inline constexpr vec2 operator/(const float o) const {
+	inline constexpr vec2<C> operator/(const C o) const {
 		return vec2(x / o, y / o);
 	}
-	inline constexpr vec2 operator*(const vec2& o) const {
+	inline constexpr vec2<C> operator*(const vec2<C>& o) const {
 		return vec2(x * o.x, y * o.y);
 	}
-	inline constexpr vec2 operator*(const float o) const {
+	inline constexpr vec2<C> operator*(const C o) const {
 		return vec2(x * o, y * o);
 	}
-	inline vec2& operator+=(const vec2& o) {
+	inline vec2<C>& operator+=(const vec2<C>& o) {
 		x += o.x;
 		y += o.y;
+		return *this;
+	}
+
+	inline vec2<C>& operator-=(const vec2<C>& o) {
+		x -= o.x;
+		y -= o.y;
 		return *this;
 	}
 };

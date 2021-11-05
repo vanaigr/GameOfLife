@@ -215,8 +215,28 @@ public:
 	}/* tested */
 
 	template<typename gridType = current>
+	uint32_t& getCellsInt(int32_t index) {
+		auto* grid{ getGrid<gridType>() };
+		const auto row = index / int32_t(width_grid);
+		const auto col = misc::mod(index, width_grid);
+
+		const auto col_int = col / batchSize;
+
+		return grid[startPadding_int + row * width_int + col_int];
+	}
+
+	template<typename gridType = current>
 	uint32_t& getCellsActual_int(int32_t index_actual_int) {
 		return getGrid<gridType>()[index_actual_int + startPadding_int];
+	}
+
+	uint32_t indexAsActualInt(const uint32_t index) {
+		const auto row = index / int32_t(width_grid);
+		const auto col = misc::mod(index, width_grid);
+
+		const auto col_int = col / batchSize;
+
+		return row * width_int + col_int;
 	}
 
  private:
@@ -624,7 +644,7 @@ public:
 	 Timer<> t2{};
 	 auto& gpuBufferLock_flag = data->gpuBufferLock_flag;
 	 bool expected = false;
-	 while (!gpuBufferLock_flag.compare_exchange_weak(expected, true)) { expected = false; }// ::std::cout << data->index << ":waiting" << ::std::endl; }
+	 while (!gpuBufferLock_flag.compare_exchange_weak(expected, true)) { expected = false; }
 
 	 data->waiting.add(t2.elapsedTime());
 
@@ -727,7 +747,7 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t n
 	};
 
 	uint32_t batchesBefore = 0;
-	uint32_t remainingBatches = misc::intDivCeil(size_actual(), batchSize);
+	uint32_t remainingBatches = gridPimpl->size_int;
 
 	const double amountOfWorkT1 = remainingBatches / (pow((1.0 + fraction), numberOfTasks) - 1) * fraction;
 
@@ -780,12 +800,18 @@ void Field::fill(const FieldCell cell) {
 	shouldUpdateGrid = true;
 
 	indecesToBrokenCells.clear();
-	deployGridTasks();
 
-	//glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
-	//glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentReadOffset() + 0, misc::roundUpIntTo(size(), sizeOfUint32), &gridPimpl->currentCells(0));
-	//glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
-	//glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+	//bool expected = false;
+	//while (!gpuBufferLock_flag.compare_exchange_weak(expected, true)) { expected = false; }
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentReadOffset(), size_bytes(), &gridPimpl->getCellsActual_int(0));
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	//gpuBufferLock_flag.store(false);
+
+	deployGridTasks();
 }
 
 FieldCell Field::cellAtIndex(const uint32_t index) const {
@@ -796,10 +822,17 @@ void Field::setCellAtIndex(const uint32_t index, FieldCell cell) {
 	const auto gridCell{ gridPimpl->cellAt<Field::FieldPimpl::current>(index) };
 	if (gridCell != cell) {
 		gridPimpl->setCellAt(index, cell);
-		//glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
-		//glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentReadOffset() + index, sizeof(), &cell);
-		//glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
-		//glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+		bool expected = false;
+		while (!gpuBufferLock_flag.compare_exchange_weak(expected, true)) { expected = false; }
+		const auto index_actual_int{ gridPimpl->indexAsActualInt(index) };
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentReadOffset() + index_actual_int * sizeOfUint32, sizeOfUint32, &gridPimpl->getCellsActual_int(index_actual_int));
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+		gpuBufferLock_flag.store(false);
+
 		if (!isStopped) {
 			indecesToBrokenCells.push_back(index);
 
@@ -820,7 +853,7 @@ void Field::updateGeneration() {
 	waitForGridTasks();
 
 	if (indecesToBrokenCells.size() > 0) {
-		//glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
 		
 		for (auto it = indecesToBrokenCells.begin(); it != indecesToBrokenCells.end(); it++) {
 			const uint32_t index = *it;
@@ -832,15 +865,18 @@ void Field::updateGeneration() {
 					int offsetedIndex = x + width() * y;
 					const auto newCell = updatedCell(offsetedIndex, gridPimpl);
 					gridPimpl->setCellAt<Field::FieldPimpl::buffer>(offsetedIndex, newCell);
-					//glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentWriteOffset() + offsetedIndex, sizeof(FieldCell), &newCell);
+					const auto index_actual_int{ gridPimpl->indexAsActualInt(offsetedIndex) };
+
+					glBufferSubData(GL_SHADER_STORAGE_BUFFER, currentWriteOffset() + index_actual_int * sizeOfUint32, sizeOfUint32, &gridPimpl->getCellsActual_int<Field::FieldPimpl::buffer>(index_actual_int));
+
 				}
 			}
 
 		}
 		indecesToBrokenCells.clear();
 
-		//glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
-		//glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 	}
 
 	gridPimpl->prepareNext();
