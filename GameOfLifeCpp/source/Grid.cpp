@@ -48,6 +48,7 @@ public:
 	const uint32_t size_grid;
 	const uint32_t size_actual;
 	const uint32_t size_int;
+	const bool edgeCellsOptimization;
 private:
 	const uint32_t startPadding_int;
 	const uint32_t endPadding_int;
@@ -67,8 +68,11 @@ public:
 		size_actual{ width_actual * height },
 		size_int{ misc::intDivCeil(width_actual * height, batchSize) },
 
-		startPadding_int{ width_int }, /*
+		edgeCellsOptimization{ width_actual - width_grid >= 2 },
+
+		startPadding_int{ width_int + 1 }, /*
 			top row duplicate before the first row
+			+ one batch for cell index 0 neighbours
 		*/
 		endPadding_int{ misc::intDivCeil(width_grid, batchSize) + 1 }, /*
 			bottom row duplicate after the last row
@@ -85,9 +89,81 @@ public:
 
 	void prepareNext() {
 		current_.swap(buffer_);
-		std::memcpy(&current_[0], &(current_[size_int]), width_int * sizeOfUint32); //start pading
-		std::memcpy(&current_[startPadding_int + size_int], &(current_[startPadding_int]), width_int * sizeOfUint32); //end pading
-		
+		std::memcpy(
+			&current_[startPadding_int - width_int], 
+			&(current_[startPadding_int + size_int - width_int]), 
+			width_int * sizeOfUint32); //start pading
+
+		std::memcpy(
+			&current_[startPadding_int + size_int], 
+			&(current_[startPadding_int]), 
+			width_int * sizeOfUint32); //end pading
+
+		if (edgeCellsOptimization) {
+			AutoTimer<> t{ "edge cells update" };
+			const uint32_t firstEmptyCellInColIndex_int = width_grid / batchSize;
+			const uint32_t firstEmptyCellIndexInBatch   = width_grid % batchSize;
+
+			//one batch beforw first row
+			{
+				uint32_t& cells = current_[0];
+				uint32_t& cells_nextRow = current_[width_int];
+
+				const uint32_t lastCell = (cells_nextRow >> (firstEmptyCellIndexInBatch - 1)) & 1;
+				const uint32_t lastCellCopy_bit = lastCell << (batchSize - 1); //last cell on next row -copy> lastBit
+
+				cells = lastCellCopy_bit;
+			}
+			//first row
+			{
+				const uint32_t row_int = -1 * width_int;
+				const uint32_t index_int = row_int + firstEmptyCellInColIndex_int;
+
+				uint32_t& cells = getCellsActual_int(index_int);
+				uint32_t& cells_nextRow = getCellsActual_int(index_int + width_int);
+				uint32_t& cells_rowStart = getCellsActual_int(row_int);
+
+				const uint32_t lastCell = (cells_nextRow >> (firstEmptyCellIndexInBatch - 1)) & 1;
+				const uint32_t lastCellCopy_bit = lastCell << (batchSize - 1); //last cell on next row -copy> lastBit
+
+				const uint32_t firstCell = cells_rowStart & 1;
+				const uint32_t firstCellCopy_bit = firstCell << (firstEmptyCellIndexInBatch); //first cell -copy> firstEmptyBit (after last cell original)
+
+				cells = (cells & (~0u >> (batchSize - firstEmptyCellIndexInBatch))) | firstCellCopy_bit | lastCellCopy_bit;
+			}
+
+			//
+			for (uint32_t row = 0; row < height; row++) {
+				const uint32_t row_int = row * width_int;
+				const uint32_t index_int = row_int + firstEmptyCellInColIndex_int;
+
+				uint32_t& cells = getCellsActual_int(index_int);
+				uint32_t& cells_nextRow = getCellsActual_int(index_int + width_int);
+				uint32_t& cells_rowStart = getCellsActual_int(row_int);
+
+				const uint32_t lastCell = (cells_nextRow >> (firstEmptyCellIndexInBatch - 1)) & 1;
+				const uint32_t lastCellCopy_bit = lastCell << (batchSize - 1); //last cell on next row -copy> lastBit
+
+				const uint32_t firstCell = cells_rowStart & 1;
+				const uint32_t firstCellCopy_bit = firstCell << (firstEmptyCellIndexInBatch); //first cell -copy> firstEmptyBit (after last cell original)
+
+				cells = (cells & (~0u >> (batchSize - firstEmptyCellIndexInBatch))) | firstCellCopy_bit | lastCellCopy_bit;
+			}
+
+			//last row
+			{
+				const uint32_t row_int = height * width_int;
+				const uint32_t index_int = row_int + firstEmptyCellInColIndex_int;
+
+				uint32_t& cells = getCellsActual_int(index_int);
+				uint32_t& cells_rowStart = getCellsActual_int(row_int);
+
+				const uint32_t firstCell = cells_rowStart & 1;
+				const uint32_t firstCellCopy_bit = firstCell << (firstEmptyCellIndexInBatch); //first cell -copy> firstEmptyBit (after last cell original)
+
+				cells = (cells & (~0u >> (batchSize - firstEmptyCellIndexInBatch))) | firstCellCopy_bit;
+			}
+		}
 	}
 
 	template<typename gridType = current>
@@ -429,14 +505,14 @@ public:
 	 };
 
 	 remainder previousRemainder{
-		 isCell_actual(i_a() - 1 - width_actual) +
-		 isCell_actual(i_a() - 1 + 0) +
-		 isCell_actual(i_a() - 1 + width_actual) +
+		 isCell_actual(i_a() - 2 - width_actual) +
+		 isCell_actual(i_a() - 2 + 0) +
+		 isCell_actual(i_a() - 2 + width_actual) +
 		 (
 			 uint16_t(
-				 isCell_actual(i_a() - width_actual) +
-				 isCell_actual(i_a() + 0) +
-				 isCell_actual(i_a() + width_actual))
+				 isCell_actual(i_a() - 1 - width_actual) +
+				 isCell_actual(i_a() - 1 + 0) +
+				 isCell_actual(i_a() - 1 + width_actual))
 			 << 8
 			 ),
 		 isCell(i_a())
@@ -466,7 +542,12 @@ public:
 
 	 const uint32_t startRow = startIndex / width_actual;
 	 const uint32_t endRow = misc::min<uint32_t>(misc::intDivCeil(endIndex + 1, width_actual), height);
-	 {
+
+	 if (grid->edgeCellsOptimization == false) {
+		 std::cerr << "cells optimisation if off!";
+		 exit(-1);
+	 }
+	 /*{
 		 uint8_t //top/cur/bot + first/second/last
 			 tf = isCell(-width_grid),
 			 ts = isCell(-width_grid + 1),
@@ -538,7 +619,7 @@ public:
 			 cl = bl;
 		 }
 	 }
-	 if (data->interrupt_flag.load()) return;
+	 if (data->interrupt_flag.load()) return;*/
 
 	 data->gridUpdate.add(t.elapsedTime());
 
