@@ -606,17 +606,17 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t n
 	timeForTask3 = timeForTask2 + timeForTask2 * fraction;
 	...
 
-
-	timeForTask1 + timeForTask2 + timeForTask3 + ... = 1.0;
-	amountOfWorkT1 * (1.0 + fraction) + (amountOfWorkT1 * (1.0 + fraction)) * (1.0  + fraction) + ... = workload * (1.0 + fraction);
+	                                                            v  total time  
+	timeForTask1 + timeForTask2 + timeForTask3 + ... = workload * (1.0 + fraction);
+	amountOfWorkT1 * (1.0 + fraction) 
+		+ (amountOfWorkT1 * (1.0 + fraction)) * (1.0  + fraction) 
+		+ ...                                                       = workload * (1.0 + fraction);
 	amountOfWorkT1 * (1.0 + fraction) + amountOfWorkT1 * (1.0  + fraction)^2 + ...  + amountOfWorkT1 * (1.0  + fraction)^numberOfTasks = workload * (1.0 + fraction);
-	amountOfWorkT1 + amountOfWorkT1 * (1.0  + fraction)^1 + ... = workload;
-	amountOfWorkT1 * ((1.0 + fraction) + (1.0  + fraction)^2 + ... + (1.0  + fraction)^(numberOfTasks - 1)) = workload;
 
-	amountOfWorkT1 = workload / ((1.0 + fraction) + (1.0  + fraction)^2 + ... + (1.0  + fraction)^(numberOfTasks - 1));
+	amountOfWorkT1 * ((1.0 + fraction) + (1.0  + fraction)^2 + ... + (1.0  + fraction)^numberOfTasks) = workload * (1.0 + fraction);
 
-	amountOfWorkT1 = workload / ((((1.0 + fraction) * ((1.0 + fraction)^(numberOfTasks-1) - 1)) / fraction)
-	amountOfWorkT1 = workload / (((1.0 + fraction) * ((1.0 + fraction)^(numberOfTasks-1) - 1))) * fraction
+	amountOfWorkT1 = workload / ( ( (1.0 + fraction)^numberOfTasks - 1 ) / fraction );
+	amountOfWorkT1 = workload /   ( (1.0 + fraction)^numberOfTasks - 1 ) * fraction  ;
 	*/);
 
 	const auto createGridTask = [window, this](const uint32_t index, const uint32_t startBatch, const uint32_t endBatch) -> void {
@@ -651,7 +651,7 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t n
 	uint32_t batchesBefore = 0;
 	uint32_t remainingBatches = misc::intDivCeil(size_actual(), batchSize);
 
-	const double amountOfWorkT1 = remainingBatches / ((1.0 + fraction) * (pow((1.0 + fraction), numberOfTasks - 1) - 1)) * fraction;
+	const double amountOfWorkT1 = remainingBatches / (pow((1.0 + fraction), numberOfTasks) - 1) * fraction;
 
 	double currentTaskWork = amountOfWorkT1;
 
