@@ -4,6 +4,7 @@
 #include "Vector.h"
 #include <cassert>
 
+#define print_msg(msg) { std::cout << (msg) << std::endl; }
 namespace misc {
     template<class T>
     constexpr T lerp(T a, T b, T f) noexcept {
@@ -58,6 +59,10 @@ namespace misc {
         const auto result = number + (round - remainder - 1);
         assert(result % round == 0);
         return result;
+    }
+
+    inline constexpr uint32_t intDivCeil(uint32_t number, uint32_t round) {
+        return roundUpIntTo(number, round) / round;
     }
 
     template<class T>

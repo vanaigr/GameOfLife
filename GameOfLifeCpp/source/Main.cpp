@@ -41,9 +41,9 @@ const uint32_t windowWidth = 1920, windowHeight = 1080;
 const uint32_t windowWidth = 800, windowHeight = 800;
 #endif // FULLSCREEN
 
-const uint32_t gridWidth = 4'00, gridHeight = 4'00;
+const uint32_t gridWidth = 10'000, gridHeight = 10'000;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 4;
+const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
 
 const float size = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
@@ -65,15 +65,7 @@ vec2 desiredOffset(0, 0), offset = desiredOffset;
 
 float lensDistortion = -0.17;
 
-
-enum class BrushMode : bool {
-	CELL,
-	WALL
-};
-
 int32_t brushSize = 0;
-BrushMode brushMode = BrushMode::CELL;
-
 
 bool pan = false;
 enum class PaintMode : unsigned char {
@@ -96,7 +88,7 @@ float r2 = 0; //normalized mouseX
 
 GLuint frameBuffer, frameBufferTexture;
 
-
+void printMouseCellInfo();
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) noexcept {
 	
@@ -116,6 +108,9 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		const auto maxfps = microsecPerFrame.max();
 		std::cout << "fps " << float(1'000'000 / (mpf)) << " (" << (mpf / 1'000) << "ms" << ", maximum: " << (maxfps / 1'000) << "ms)" << std::endl;
 	}
+	if (key == GLFW_KEY_LEFT_SHIFT && action == GLFW_PRESS) {
+		printMouseCellInfo();
+	}
 	if (key == GLFW_KEY_ESCAPE) {
 		exit(0);
 	}
@@ -125,15 +120,6 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		if (key == GLFW_KEY_ENTER) {
 			grid->fill(FieldCell::DEAD);
 		}
-		else if (key == GLFW_KEY_1) {
-			brushMode = BrushMode::CELL;
-		}
-		else if (key == GLFW_KEY_2) {
-			brushMode = BrushMode::WALL;
-		}
-		/*else if (key == 51) {
-			mode = 2;
-		}*/
 		else if (key == GLFW_KEY_SPACE) { //sace
 			gridUpdate = !gridUpdate;
 		}
@@ -185,6 +171,38 @@ vec2 mouseToGlobal() {
 	return screenToGlobal(mousePos);
 }
 
+vec2 globalToScreen(vec2 coord) {
+	//x = (sx - width / 2f)/scale + width / 2f - tx;
+	//(x + tx - width/2f) * scale + width/2f = sx;
+
+	return vec2((coord.x * size + offset.x - windowWidth / 2.) * currentScale + windowWidth / 2., (coord.y * size + offset.y - windowHeight / 2.) * currentScale + windowHeight / 2.);
+}
+
+vec2i globalAsCell(vec2 coord) {
+	float cx = coord.x;
+	float cy = coord.y;
+	int cellX = int(misc::modf(cx, gridWidth));
+	int cellY = int(misc::modf(cy, gridHeight));
+	return vec2i{ cellX, cellY };
+}
+
+void printMouseCellInfo() {
+	const auto mouseCellCoord = globalAsCell(mouseToGlobal());
+	const auto mouseCellIndex = grid->coordAsIndex(mouseCellCoord);
+	const auto mouseCell = grid->cellAtCoord(mouseCellCoord);
+
+	printf(
+		"mouse is at (%d; %d), index=%d (%d mod 16), cell:%s (%d)" "\n",
+		mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), mouseCell
+	);
+
+	for (int i = -1; i <= 1; i++) {
+		for (int j = -1; j <= 1; j++)
+			std::cout << (fieldCell::isAlive(grid->cellAtCoord(mouseCellCoord + vec2i(j, i))) ? '1' : '0') << ' ';
+		std::cout << std::endl;
+	}
+}
+
 static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey) noexcept {
 	r2 = mousex / windowWidth;
 	mousePos = vec2(mousex, mousey);
@@ -223,22 +241,6 @@ void window_size_callback(GLFWwindow* window, int width, int height) noexcept {
 	glBindTexture(GL_TEXTURE_2D, 0);*/
 }
 
-vec2 globalToScreen(vec2 coord) {
-	//x = (sx - width / 2f)/scale + width / 2f - tx;
-	//(x + tx - width/2f) * scale + width/2f = sx;
-
-	return vec2((coord.x * size + offset.x - windowWidth / 2.) * currentScale + windowWidth / 2., (coord.y * size + offset.y - windowHeight / 2.) * currentScale + windowHeight / 2.);
-}
-
-vec2i globalAsCell(vec2 coord) {
-	float cx = coord.x;
-	float cy = coord.y;
-	int cellX = int(misc::modf(cx, gridWidth));
-	int cellY = int(misc::modf(cy, gridHeight));
-	return vec2i{ cellX, cellY };
-}
-
-
 void updateState() {
 	curTime = std::chrono::steady_clock::now();
 
@@ -250,8 +252,7 @@ void updateState() {
 			const vec2i offset{ xo, yo };
 			const auto coord = cell + offset;
 			if (paintMode == PaintMode::PAINT) {
-				if (brushMode == BrushMode::WALL) grid->setCellAtCoord(coord, FieldCell::WALL);
-				else if (brushMode == BrushMode::CELL && grid->cellAtCoord(coord) != FieldCell::WALL) grid->setCellAtCoord(cell, FieldCell::ALIVE);
+				grid->setCellAtCoord(cell, FieldCell::ALIVE);
 			}
 			else if (paintMode == PaintMode::DELETE) {
 				grid->setCellAtCoord(coord + offset, FieldCell::DEAD);
@@ -305,22 +306,6 @@ struct BufferData {
 		return offset * isOffset;
 	}
 };
-
-void threadSendNextBuffer(BufferData &data) {
-	GLFWwindow *window = data.offscreen_context;
-	if (!window) {
-		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-		data.offscreen_context = glfwCreateWindow(2, 2, "", NULL, NULL);
-		window = data.offscreen_context;
-		glfwMakeContextCurrent(window);
-	}
-
-	const auto bufferP = data.bufferP;
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, bufferP);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, data.currentOffset(), sizeof(FieldCell) * grid->size(), grid->grid());
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, bufferP);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-}
 
 int main(void)
 {
@@ -390,8 +375,7 @@ int main(void)
 		return -1;
 	}
 
-	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks, ssbo, window) };
-	grid->stopAllGridTasks();
+	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks, ssbo, window, false) };
 	
 	for (size_t i = 0; i < gridSize; i++) {
 		const double freq = 0.05;
@@ -402,9 +386,8 @@ int main(void)
 	grid->startAllGridTasks();
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size() * 2, NULL, GL_DYNAMIC_DRAW);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(FieldCell) * grid->size(), grid->grid());
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, sizeof(FieldCell) * grid->size(), sizeof(FieldCell) * grid->size(), grid->grid());
+	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(grid->size_bytes() * 2, 4), NULL, GL_DYNAMIC_DRAW);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, grid->size_bytes(), grid->rawData());
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
@@ -414,6 +397,7 @@ int main(void)
 
 	glUniform1i(glGetUniformLocation(programId, "gridWidth"), GLint(gridWidth));
 	glUniform1i(glGetUniformLocation(programId, "gridHeight"), GLint(gridHeight));
+	glUniform1ui(glGetUniformLocation(programId, "gridWidth_actual"), GLuint(grid->width_actual()));
 
 	glUniform1f(glGetUniformLocation(programId, "size"), GLfloat(size));
 	glUniform1f(glGetUniformLocation(programId, "lensDistortion"), GLfloat(lensDistortion));
@@ -427,7 +411,7 @@ int main(void)
 	GLint mousePosP = glGetUniformLocation(programId, "mousePos");
 
 	GLint is2ndBufferP = glGetUniformLocation(programId, "is2ndBuffer");
-
+	glUniform1ui(glGetUniformLocation(programId, "bufferOffset_bytes"), grid->size_bytes());
 
 	glActiveTexture(GL_TEXTURE0);
 	glGenTextures(1, &frameBufferTexture);
@@ -483,7 +467,9 @@ int main(void)
 	lastGridUpdateTime = lastScreenUpdateTime = curTime = std::chrono::steady_clock::now();
 
 	auto tim = std::chrono::steady_clock::now();
+
 	
+
 	while (!glfwWindowShouldClose(window))
 	{
 		glUseProgram(programId);
@@ -501,9 +487,8 @@ int main(void)
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, !grid->isField2ndBuffer());
+			glUniform1ui(is2ndBufferP, grid->isFieldBufferWriteOffset());
 
-			grid->grid();
 			set.add(t.elapsedTime());
 		}
 

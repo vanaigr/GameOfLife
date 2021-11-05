@@ -20,6 +20,7 @@ uniform float lensDistortion;
 
 uniform int gridWidth;
 uniform int gridHeight;
+uniform uint gridWidth_actual;
 
 uniform float r1;
 uniform float r2;
@@ -31,6 +32,7 @@ vec2 windowSize() {
 }
 
 uniform uint is2ndBuffer;
+uniform uint bufferOffset_bytes;
 
 layout(std430, binding = 1) buffer Grid
 {
@@ -38,10 +40,15 @@ layout(std430, binding = 1) buffer Grid
 } packedGrid;
 
 uint cellAt(uint index) {
-    uint bufIndex = index + is2ndBuffer * gridWidth * gridHeight;
-    uint arrIndex = bufIndex / 4;
-    uint arrShift = (bufIndex % 4) * 8;
-    return ((packedGrid.grid[arrIndex]) >> arrShift) & 255;
+    uint row = index / gridWidth;
+    uint col = index % gridWidth;
+
+    uint index_actual = row * gridWidth_actual + col;
+    uint index_actual_buffer = index_actual + is2ndBuffer * bufferOffset_bytes * 8;
+
+    uint arrIndex = index_actual_buffer / 32;
+    uint arrShift = (index_actual_buffer % 32);
+    return ((packedGrid.grid[arrIndex]) >> arrShift) & 1;
 }
 
 layout(origin_upper_left) in vec4 gl_FragCoord;
@@ -93,8 +100,7 @@ vec4 colorForCoords(vec2 screenCoords) {
 
     uint mask = cellAt(index);
 
-    bool isWall = ((mask >> 4) & 1) == 1;
-    bool isCell = !isWall && ((mask & 1) == 1);
+    bool isCell = mask == 1;
     bool isNothing = mask == 0;
 
     bool isPadding;// = (dx < pv || dx > padding-pv) || (dy < pv || dy > padding-pv)
@@ -105,11 +111,10 @@ vec4 colorForCoords(vec2 screenCoords) {
         isPadding = (dx < padding || dx > 1 - padding) || (dy < padding || dy > 1 - padding);
     }
 
-    vec4 wall = float(isWall) * wallColor;
     vec4 cell = float(isCell) * float(!isPadding) * cellColor;
     vec4 bkg = float(isNothing) * bkgColor;
     vec4 cellPadding = float(isCell) * float(isPadding) * bkgColor;
-    vec4 col = wall + cell + bkg + cellPadding;
+    vec4 col = cell + bkg + cellPadding;
     col = mix(col, vec4(.5, .5, .5, 1), edgeMask);
     col = mix(col, vec4(.5, .5, .5, 1), isPadding);
     return col;
