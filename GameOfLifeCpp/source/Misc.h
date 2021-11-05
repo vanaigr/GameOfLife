@@ -61,6 +61,10 @@ namespace misc {
         return result;
     }
 
+    inline constexpr uint32_t intDivCeil(uint32_t number, uint32_t round) {
+        return roundUpIntTo(number, round) / round;
+    }
+
     template<class T>
     inline constexpr T clamp(const T value, const T b1, const T b2) {
         if (b1 > b2) return min(b1, max(value, b2));

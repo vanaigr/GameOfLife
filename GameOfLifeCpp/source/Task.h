@@ -60,6 +60,7 @@ Task<Data>::Task(void(*job_)(Data&), Data data_) : data(std::move(data_)), job(j
 template<class Data>
 void Task<Data>::start() noexcept {
 	//std::cout << "start\n";
+	std::lock_guard<std::mutex> lk{ startLock };
 	workEnded.store(false);
 	workStarted.store(true);
 	startWork.notify_all();

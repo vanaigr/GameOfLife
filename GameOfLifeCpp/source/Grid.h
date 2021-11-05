@@ -84,6 +84,8 @@ public:
 	uint32_t size() const;
 
 	uint32_t size_bytes() const;
+	uint32_t size_actual() const;
+	uint32_t width_actual() const;
 	uint32_t *rawData() const;
 
 	void stopAllGridTasks();

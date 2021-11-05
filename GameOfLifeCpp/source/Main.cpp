@@ -41,14 +41,14 @@ const uint32_t windowWidth = 1920, windowHeight = 1080;
 const uint32_t windowWidth = 800, windowHeight = 800;
 #endif // FULLSCREEN
 
-const uint32_t gridWidth = 2000, gridHeight = 2000;
+const uint32_t gridWidth = 2'000, gridHeight = 2'000;
 const uint32_t gridSize = gridWidth * gridHeight;
 const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
 
 const float size = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
 
-bool gridUpdate = false;
+bool gridUpdate = true;
 
 
 std::chrono::steady_clock::time_point lastScreenUpdateTime;
@@ -195,6 +195,12 @@ void printMouseCellInfo() {
 		"mouse is at (%d; %d), index=%d (%d mod 16), cell:%s (%d)" "\n",
 		mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), mouseCell
 	);
+
+	for (int i = -1; i <= 1; i++) {
+		for (int j = -1; j <= 1; j++)
+			std::cout << (fieldCell::isAlive(grid->cellAtCoord(mouseCellCoord + vec2i(j, i))) ? '1' : '0') << ' ';
+		std::cout << std::endl;
+	}
 }
 
 static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey) noexcept {
@@ -391,6 +397,7 @@ int main(void)
 
 	glUniform1i(glGetUniformLocation(programId, "gridWidth"), GLint(gridWidth));
 	glUniform1i(glGetUniformLocation(programId, "gridHeight"), GLint(gridHeight));
+	glUniform1ui(glGetUniformLocation(programId, "gridWidth_actual"), GLuint(grid->width_actual()));
 
 	glUniform1f(glGetUniformLocation(programId, "size"), GLfloat(size));
 	glUniform1f(glGetUniformLocation(programId, "lensDistortion"), GLfloat(lensDistortion));
@@ -480,7 +487,7 @@ int main(void)
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, !grid->isFieldBufferWriteOffset());
+			glUniform1ui(is2ndBufferP, grid->isFieldBufferWriteOffset());
 
 			set.add(t.elapsedTime());
 		}

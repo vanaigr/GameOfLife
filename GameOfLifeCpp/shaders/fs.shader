@@ -20,6 +20,7 @@ uniform float lensDistortion;
 
 uniform int gridWidth;
 uniform int gridHeight;
+uniform uint gridWidth_actual;
 
 uniform float r1;
 uniform float r2;
@@ -39,9 +40,14 @@ layout(std430, binding = 1) buffer Grid
 } packedGrid;
 
 uint cellAt(uint index) {
-    uint bufIndex = index + is2ndBuffer * bufferOffset_bytes * 8;
-    uint arrIndex = bufIndex / 32;
-    uint arrShift = (bufIndex % 32);
+    uint row = index / gridWidth;
+    uint col = index % gridWidth;
+
+    uint index_actual = row * gridWidth_actual + col;
+    uint index_actual_buffer = index_actual + is2ndBuffer * bufferOffset_bytes * 8;
+
+    uint arrIndex = index_actual_buffer / 32;
+    uint arrShift = (index_actual_buffer % 32);
     return ((packedGrid.grid[arrIndex]) >> arrShift) & 1;
 }
 
