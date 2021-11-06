@@ -22,6 +22,11 @@
 
 #include "data.h"
 
+#include<atomic>
+#include<mutex>
+
+#include<type_traits>
+
 const uint32_t counterSampleSize = 200;
 UMedianCounter 
 	set{ counterSampleSize }, 
@@ -53,7 +58,6 @@ const double cellSize_px = std::min((float)windowHeight / (float)gridHeight, (fl
 
 bool gridUpdate = true;
 
-
 std::chrono::steady_clock::time_point lastScreenUpdateTime;
 const uint32_t screenUpdatesPerSecond = 40;
 const double screenUpdateTimeMs = 1000.0 / screenUpdatesPerSecond;
@@ -82,7 +86,7 @@ PaintMode paintMode = PaintMode::NONE;
 vec2<double> mousePos(0, 0), pmousePos(0, 0);
 
 std::chrono::steady_clock::time_point lastGridUpdateTime;
-uint32_t gridUpdatesPerSecond = 1;
+uint32_t gridUpdatesPerSecond = 2;
 
 std::chrono::steady_clock::time_point curTime;
 float r1 = 1; //w key not pressed
@@ -90,6 +94,11 @@ float r2 = 0; //normalized mouseX
 
 
 GLuint frameBuffer, frameBufferTexture;
+
+
+static GLuint fieldBufferHandle;
+static size_t field_size_bytes;
+static bool isReadingSecondBuffer = false;
 
 void printMouseCellInfo();
 
@@ -239,6 +248,31 @@ void window_size_callback(GLFWwindow* window, int width, int height) noexcept {
 	glBindTexture(GL_TEXTURE_2D, 0);*/
 }
 
+static void sendFieldUpdate(GLFWwindow *context_suggestion, bool isBuffer, FieldModification fm) {
+	static std::atomic_bool gpuBufferLock_flag{ false };
+	static constexpr auto sizeOfBatch = sizeof std::remove_pointer<decltype(decltype(fm)::data)>::type();/*
+		to convert from batches to bytes
+	*/
+
+	bool expected = false;
+	while (!gpuBufferLock_flag.compare_exchange_weak(expected, true)) { expected = false; }
+
+	if(!glfwGetCurrentContext()) glfwMakeContextCurrent(context_suggestion);
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBufferHandle);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, fieldBufferHandle);//TODO ?
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 
+		((isReadingSecondBuffer ^ isBuffer) * field_size_bytes) + fm.startIndex_int * sizeOfBatch
+		, fm.size_int * sizeOfBatch
+		, fm.data);
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	glFinish();
+
+	gpuBufferLock_flag.store(false);
+}
+
 void updateState() {
 	curTime = std::chrono::steady_clock::now();
 
@@ -251,6 +285,7 @@ void updateState() {
 		Timer<> t{};
 		grid->updateGeneration();
 		fieldUpdateWait.add(t.elapsedTime());
+		isReadingSecondBuffer = !isReadingSecondBuffer;
 	}
 
 	if (paintMode != PaintMode::NONE) {
@@ -367,21 +402,48 @@ int main(void)
 	siv::PerlinNoise noise{};
 	std::srand(75489385988);
 
-	GLuint ssbo;
-	glGenBuffers(1, &ssbo);
+	glGenBuffers(1, &fieldBufferHandle);
 	GLenum status;
 	if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
 		fprintf(stderr, "glCheckFramebufferStatus: error %u", status);
 		return -1;
 	}
 
-	grid = std::unique_ptr<Field>{ new Field(gridWidth, gridHeight, numberOfTasks, ssbo, window, false) };
+	class GLFieldOutput final : public FieldOutput {
+	private:
+		GLFWwindow* context;
+		bool isBuffer;
+	public:
+		GLFieldOutput(bool isBuffer_, GLFWwindow *window_origin) : isBuffer{ isBuffer_ } {
+			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+			auto* context_ = glfwCreateWindow(2, 2, "", NULL, window_origin);
+			if (!context_) {
+				::std::cout << "window for output(current) is null";
+				exit(-1);
+			}
+			context = context_;
+		}
+		
+		virtual void write(FieldModification fm) override {
+			sendFieldUpdate(context, isBuffer, fm);
+		}
+		virtual ~GLFieldOutput() override {
+			glfwDestroyWindow(context);
+		}
+	};
 
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(grid->size_bytes() * 2, 4), NULL, GL_DYNAMIC_DRAW);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, grid->size_bytes(), grid->rawData());
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssbo);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+	const auto current_outputs = [window]() -> std::unique_ptr<FieldOutput> {
+		return std::unique_ptr<FieldOutput>( new GLFieldOutput{ false, window } );
+	};
+	const auto buffer_outputs = [window]() -> std::unique_ptr<FieldOutput> {
+		return std::unique_ptr<FieldOutput>(new GLFieldOutput{ true, window });
+	};
+
+	grid = std::unique_ptr<Field>{ 
+		new Field(gridWidth, gridHeight, numberOfTasks, current_outputs, buffer_outputs, false)
+	};
+
+	field_size_bytes = grid->size_bytes();
 	
 	for (size_t i = 0; i < gridSize; i++) {
 		const double freq = 0.05;
@@ -392,6 +454,11 @@ int main(void)
 
 	grid->startAllGridTasks();
 
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBufferHandle);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(field_size_bytes * 2, 4), NULL, GL_DYNAMIC_DRAW);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER, isReadingSecondBuffer* field_size_bytes, field_size_bytes, grid->rawData());
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, fieldBufferHandle);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
 	//uniforms set
 	glUniform1i(glGetUniformLocation(programId, "width"), windowWidth);
@@ -460,7 +527,7 @@ int main(void)
 
 
 	setProgramId(programId);
-	setSSBOHandle(ssbo);
+	setSSBOHandle(fieldBufferHandle);
 
 	GLint r1P = glGetUniformLocation(programId, "r1");
 	GLint r2P = glGetUniformLocation(programId, "r2");
@@ -486,7 +553,7 @@ int main(void)
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, !grid->isFieldBufferWriteOffset());
+			glUniform1ui(is2ndBufferP, isReadingSecondBuffer);
 
 			set.add(t.elapsedTime());
 		}

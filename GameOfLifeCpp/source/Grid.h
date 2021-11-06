@@ -10,6 +10,7 @@
 #include <atomic>
 #include <vector>
 #include"MedianCounter.h"
+#include<functional>
 
 enum class FieldCell : uint8_t
 {
@@ -30,28 +31,36 @@ namespace fieldCell {
 	}
 }
 
+struct FieldModification {
+	uint32_t startIndex_int, size_int;
+	const uint32_t *data;
+};
+
+class FieldOutput {
+public:
+	virtual void write(FieldModification) = 0;
+	virtual ~FieldOutput() = default;
+
+};//must be used as output only in one thread
+
 class Field final {
 public:
 	class FieldPimpl;
 	struct GridData;
-	struct PackedGridData;
-//public:
-//	const uint32_t packedGridSize;
 private:
 	std::unique_ptr<FieldPimpl> gridPimpl;
-	bool shouldUpdateGrid;
+	bool isGridUpdated_;
 	bool isStopped;
-	bool isFieldGPUBufferWriteOffset;
-	std::atomic_bool gpuBufferLock_flag;
+	std::unique_ptr<FieldOutput> const current_output;
 
 	const uint32_t numberOfTasks;
 	std::unique_ptr<std::unique_ptr<Task<std::unique_ptr<GridData>>>[/*numberOfTasks*/]> gridTasks;
 	std::atomic_bool interrupt_flag;
 	std::vector<uint32_t> indecesToBrokenCells;
-
-	const GLuint bufferP;
 public:
-	Field(const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, const GLuint bufferP, GLFWwindow *window, bool deployTasks);
+	Field(const uint32_t gridWidth, const uint32_t gridHeight, 
+		const size_t numberOfTasks_, std::function<std::unique_ptr<FieldOutput>()> current_outputs, std::function<std::unique_ptr<FieldOutput>()> buffer_outputs, bool deployTasks
+	);
 	~Field();
 
 	Field(Field const&) = delete;
@@ -90,19 +99,10 @@ public:
 
 	void stopAllGridTasks();
 	void startAllGridTasks();
-
-	bool isFieldBufferWriteOffset();
 private:
 	void waitForGridTasks();
 	void deployGridTasks();
-	uint32_t currentWriteOffset();
-	uint32_t currentReadOffset();
 };
-
-inline bool Field::isFieldBufferWriteOffset() {
-	return isFieldGPUBufferWriteOffset;
-}
-
 
 inline void Field::setCellAtCoord(const vec2i& coord, FieldCell cell) {
 	setCellAtIndex(coordAsIndex(coord), cell);
@@ -140,5 +140,5 @@ inline vec2i Field::normalizeCoord(const vec2i& coord) const {
 }
 
 inline bool &Field::isGridUpdated() {
-	return shouldUpdateGrid;
+	return isGridUpdated_;
 }

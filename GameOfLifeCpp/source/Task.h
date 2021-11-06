@@ -34,7 +34,9 @@ public:
 
 	Task(const Task&) = delete;
 	Task& operator=(Task const&) = delete;
-	~Task() = default;
+	~Task() {
+		waitForResult();
+	}
 public:
 	void start() noexcept;
 	void waitForResult() noexcept;
@@ -46,7 +48,6 @@ template<class Data>
 void Task<Data>::task_() noexcept {
 	while (true) {
 		std::unique_lock<std::mutex> lock{ startLock };
-		while (workStarted.load() == false)
 		startWork.wait(lock , [this]() { return workStarted.load() == true; });
 		job(data);
 		workStarted.store(false);
@@ -59,7 +60,6 @@ Task<Data>::Task(void(*job_)(Data&), Data data_) : data(std::move(data_)), job(j
 
 template<class Data>
 void Task<Data>::start() noexcept {
-	//std::cout << "start\n";
 	std::lock_guard<std::mutex> lk{ startLock };
 	workEnded.store(false);
 	workStarted.store(true);
