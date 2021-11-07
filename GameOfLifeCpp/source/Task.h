@@ -30,7 +30,8 @@ private:
 	std::thread thread;
 	std::chrono::time_point<std::chrono::steady_clock> startTime = std::chrono::steady_clock::now();
 public:
-	Task(void(*job_)(Data&), Data data_);
+	template<class... DataArgs>
+	Task(void(*job_)(Data&), DataArgs&&... args) : data(std::forward<DataArgs>(args)...), job(job_), thread{ &Task::task_, this } {}
 
 	Task(const Task&) = delete;
 	Task& operator=(Task const&) = delete;
@@ -54,9 +55,6 @@ void Task<Data>::task_() noexcept {
 		workEnded.store(true);
 	}
 }
-
-template<class Data>
-Task<Data>::Task(void(*job_)(Data&), Data data_) : data(std::move(data_)), job(job_), thread{ &Task::task_, this } {}
 
 template<class Data>
 void Task<Data>::start() noexcept {

@@ -49,12 +49,12 @@ public:
 	struct GridData;
 private:
 	std::unique_ptr<FieldPimpl> gridPimpl;
-	bool isGridUpdated_;
 	bool isStopped;
 	std::unique_ptr<FieldOutput> const current_output;
+	std::unique_ptr<FieldOutput> const buffer_output;
 
 	const uint32_t numberOfTasks;
-	std::unique_ptr<std::unique_ptr<Task<std::unique_ptr<GridData>>>[/*numberOfTasks*/]> gridTasks;
+	std::unique_ptr<std::unique_ptr<Task<GridData>>[/*numberOfTasks*/]> gridTasks;
 	std::atomic_bool interrupt_flag;
 	std::vector<uint32_t> indecesToBrokenCells;
 public:
@@ -66,7 +66,9 @@ public:
 	Field(Field const&) = delete;
 	Field& operator=(Field const&) = delete;
 public:
-	void updateGeneration();
+	void finishGeneration();
+	void startNewGeneration();
+
 	void fill(const FieldCell cell);
 
 	FieldCell cellAtIndex(const uint32_t index) const;
@@ -84,9 +86,6 @@ public:
 	
 	uint32_t normalizeIndex(const int32_t index) const;
 	vec2i normalizeCoord(const vec2i& coord) const;
-
-	//delete &, append const
-	bool &isGridUpdated();
 
 	uint32_t width() const;
 	uint32_t height() const;
@@ -137,8 +136,4 @@ inline uint32_t Field::normalizeIndex(const int32_t index) const {
 }
 inline vec2i Field::normalizeCoord(const vec2i& coord) const {
 	return vec2i(misc::mod(coord.x, width()), misc::mod(coord.y, height()));
-}
-
-inline bool &Field::isGridUpdated() {
-	return isGridUpdated_;
 }

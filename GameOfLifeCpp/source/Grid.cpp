@@ -295,7 +295,6 @@ public:
  };
 
  static FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
-	 //const bool grid = cellsGrid->cellAt(0);
 	 const auto width_grid = cellsGrid->width_grid;
 	 const auto height = cellsGrid->height;
 	 bool cell = cellsGrid->isCellAlive(index);
@@ -317,9 +316,9 @@ public:
 	 return fieldCell::nextGeneration(cell ? FieldCell::ALIVE : FieldCell::DEAD, aliveNeighbours);
  }
 
- static void threadUpdateGrid(std::unique_ptr<Field::GridData>& data) {
+ static void threadUpdateGrid(Field::GridData& data) {
 	 Timer<> t{};
-	 auto& grid = data->grid;
+	 auto& grid = data.grid;
 	 const int32_t width_grid = static_cast<int32_t>(grid->width_grid);
 	 const int32_t width_actual = static_cast<int32_t>(grid->width_actual);
 	 const int32_t height = static_cast<int32_t>(grid->height);
@@ -493,8 +492,8 @@ public:
 		 return grid->isCellAlive(index) ? FieldCell::ALIVE : FieldCell::DEAD;
 	 };
 
-	 const int32_t startBatch = data->startBatch;
-	 const int32_t endBatch = data->endBatch;
+	 const int32_t startBatch = data.startBatch;
+	 const int32_t endBatch = data.endBatch;
 	 const int32_t startIndex = startBatch * batchSize;
 	 const int32_t endIndex = endBatch * batchSize; //may be out of grid bounds. Padding after grid required
 
@@ -527,7 +526,7 @@ public:
 			 grid->getCellsActual_int<Field::FieldPimpl::buffer>(i_batch - 1) = uint32_t(newGenWindow);
 		 }
 
-		 if (data->interrupt_flag.load()) return;
+		 if (data.interrupt_flag.load()) return;
 	 }
 
 	 for (; i_batch < endBatch + 1; ++i_batch) {
@@ -537,7 +536,7 @@ public:
 		 grid->getCellsActual_int<Field::FieldPimpl::buffer>(i_batch - 1) = uint32_t(newGenWindow);
 	 }
 
-	 if (data->interrupt_flag.load()) return;
+	 if (data.interrupt_flag.load()) return;
 
 	 const uint32_t startRow = startIndex / width_actual;
 	 const uint32_t endRow = misc::min<uint32_t>(misc::intDivCeil(endIndex + 1, width_actual), height);
@@ -578,7 +577,7 @@ public:
 				 cl = bl;
 			 }
 		 }
-		 if (data->interrupt_flag.load()) return;
+		 if (data.interrupt_flag.load()) return;
 
 		 {
 			 uint8_t //top/cur/bot + first/last/pre-last
@@ -615,18 +614,24 @@ public:
 				 cl = bl;
 			 }
 		 }
-		 if (data->interrupt_flag.load()) return;
+		 if (data.interrupt_flag.load()) return;
 	 }
 
-	 data->gridUpdate.add(t.elapsedTime());
+	 data.gridUpdate.add(t.elapsedTime());
 
 	 Timer<> t2{};
 	 
-	 data->buffer_output->write(FieldModification{ data->startBatch, data->endBatch - data->startBatch, &grid->getCellsActual_int<Field::FieldPimpl::buffer>(startBatch) });
+	 data.buffer_output->write(FieldModification{ data.startBatch, data.endBatch - data.startBatch, &grid->getCellsActual_int<Field::FieldPimpl::buffer>(startBatch) });
 
-	 data->bufferSend.add(t2.elapsedTime());
+	 data.bufferSend.add(t2.elapsedTime());
 
-	 data->generationUpdated();
+	 //const uint32_t i = 1 << (data.task__iteration % (grid->width_grid % 32));
+	 //const uint32_t zero = 0;
+	 //data.buffer_output->write(FieldModification{ 0, 1, &zero });
+	 //data.buffer_output->write(FieldModification{ 1, 1, &i });
+	 //data.buffer_output->write(FieldModification{ 2, 1, &zero });
+
+	 data.generationUpdated();
  }
 
  uint32_t Field::width_actual() const {
@@ -650,11 +655,11 @@ Field::Field(const uint32_t gridWidth, const uint32_t gridHeight,
 	const size_t numberOfTasks_, std::function<std::unique_ptr<FieldOutput>()> current_outputs, std::function<std::unique_ptr<FieldOutput>()> buffer_outputs, bool deployTasks
 ) :
 gridPimpl{ new FieldPimpl(gridWidth, gridHeight) },
-isGridUpdated_(true),
 isStopped{ deployTasks == false },
 current_output{ current_outputs() },
+buffer_output{ buffer_outputs() },
 numberOfTasks(numberOfTasks_),
-gridTasks{ new std::unique_ptr<Task<std::unique_ptr<GridData>>>[numberOfTasks_] },
+gridTasks{ new std::unique_ptr<Task<GridData>>[numberOfTasks_] },
 interrupt_flag{ false },
 indecesToBrokenCells{ }
 {
@@ -688,19 +693,16 @@ indecesToBrokenCells{ }
 	const auto createGridTask = [this, &buffer_outputs](const uint32_t index, const uint32_t startBatch, const uint32_t endBatch) -> void {
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
-		gridTasks.get()[index] = std::unique_ptr<Task<std::unique_ptr<GridData>>>(
-			new Task<std::unique_ptr<GridData>>{
+		gridTasks.get()[index] = std::unique_ptr<Task<GridData>>(
+			new Task<GridData>{
 				threadUpdateGrid,
-				std::unique_ptr<GridData>(
-					new GridData{
-						index,
-						this->gridPimpl,
-						this->interrupt_flag,
-						startBatch,
-						endBatch,
-						buffer_outputs() //getting output
-					}
-				)
+				
+				index,
+				this->gridPimpl,
+				this->interrupt_flag,
+				startBatch,
+				endBatch,
+				buffer_outputs() //getting output	
 			}
 		);
 	};
@@ -747,8 +749,6 @@ void Field::fill(const FieldCell cell) {
 
 	gridPimpl->fill(cell);
 
-	isGridUpdated_ = true;
-
 	indecesToBrokenCells.clear();
 
 	current_output->write(FieldModification{ 0, gridPimpl->size_int, &gridPimpl->getCellsActual_int(0) });
@@ -781,15 +781,14 @@ void Field::setCellAtIndex(const uint32_t index, FieldCell cell) {
 				indecesToBrokenCells.clear();
 			}
 		}
-		isGridUpdated_ = true;
 	}
 }
 
-void Field::updateGeneration() {
+void Field::finishGeneration() {
 	waitForGridTasks();
 
 	if (indecesToBrokenCells.size() > 0) {
-		
+
 		for (auto it = indecesToBrokenCells.begin(); it != indecesToBrokenCells.end(); it++) {
 			const uint32_t index = *it;
 
@@ -802,20 +801,20 @@ void Field::updateGeneration() {
 
 					gridPimpl->setCellAt<Field::FieldPimpl::buffer>(offsetedIndex, newCell);
 
-					const auto index_actual_int{ gridPimpl->indexAsActualInt(index) };
-					current_output->write(FieldModification{ index_actual_int, 1, &gridPimpl->getCellsActual_int(index_actual_int) });
+					const auto index_actual_int{ gridPimpl->indexAsActualInt(offsetedIndex) };
+					buffer_output->write(FieldModification{ index_actual_int, 1, &gridPimpl->getCellsActual_int<Field::FieldPimpl::buffer>(index_actual_int) });
 				}
 			}
 
 		}
 		indecesToBrokenCells.clear();
-
-		
 	}
 
-	gridPimpl->prepareNext();
-	isGridUpdated_ = true;
 	interrupt_flag.store(false);
+}
+
+void Field::startNewGeneration() {
+	gridPimpl->prepareNext();
 
 	deployGridTasks();
 }

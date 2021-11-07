@@ -79,11 +79,11 @@ vec2 applyLensDistortion(vec2 coord, float intensity) {
     return vec2(newX, newY);
 }
 
-const vec4 wallColor = vec4(30.0 / 255.0, 240.0 / 255.0, 20.0 / 255.0, 1.0);
-const vec4 cellColor = vec4(30.0 / 255.0, 30.0 / 255.0, 30.0 / 255.0, 1.0);
-const vec4 bkgColor = vec4(225.0 / 255.0, 225.0 / 255.0, 225.0 / 255.0, 1.0);
+const vec3 wallColor = vec3(30.0 / 255.0, 240.0 / 255.0, 20.0 / 255.0);
+const vec3 cellColor = vec3(30.0 / 255.0, 30.0 / 255.0, 30.0 / 255.0);
+const vec3 bkgColor  = vec3(225.0 / 255.0, 225.0 / 255.0, 225.0 / 255.0);
 
-vec4 colorForCoords(vec2 screenCoords) {
+vec3 colorForCoords(vec2 screenCoords) {
     vec2 global = distortedScreenToGlobal(screenCoords);
     ivec2 cellInt = globalAsCell(global);
     int cellX = cellInt.x;
@@ -112,43 +112,34 @@ vec4 colorForCoords(vec2 screenCoords) {
         isPadding = (dx < padding || dx > 1 - padding) || (dy < padding || dy > 1 - padding);
     }
 
-    vec4 cell = float(isCell) * float(!isPadding) * cellColor;
-    vec4 bkg = float(isNothing) * bkgColor;
-    vec4 cellPadding = float(isCell) * float(isPadding) * bkgColor;
-    vec4 col = cell + bkg + cellPadding;
-    col = mix(col, vec4(.5, .5, .5, 1), edgeMask);
-    col = mix(col, vec4(.5, .5, .5, 1), isPadding);
+    vec3 cell = float(isCell) * float(!isPadding) * cellColor;
+    vec3 bkg = float(isNothing) * bkgColor;
+    vec3 cellPadding = float(isCell) * float(isPadding) * bkgColor;
+    vec3 col = cell + bkg + cellPadding;
+    col = mix(col, vec3(.5, .5, .5), edgeMask);
+    col = mix(col, vec3(.5, .5, .5), isPadding);
     return col;
 }
 
-vec4 colorForCoordsChromaticAbberation(vec2 coord, float caIntens) {
+vec3 colorForCoordsChromaticAbberation(vec2 coord, float caIntens) {
     vec2 newCoord = applyLensDistortion(coord, caIntens);
     return colorForCoords(newCoord);
 }
 
-vec4 col(vec2 coord) {
+vec3 col(vec2 coord) {
     vec2 distortedCoord = applyLensDistortion(coord, lensDistortion + (deltaScaleChange / 5));
 
     return colorForCoords(distortedCoord);
 }
 
-vec4 sample2(vec2 coord) {
-    vec4 c1 = col(coord + vec2(0.25, 0.25));
-    vec4 c2 = col(coord + vec2(0.25, -0.25));
-    vec4 c3 = col(coord + vec2(-0.25, 0.25));
-    vec4 c4 = col(coord + vec2(-0.25, -0.25));
-
-    return c1 * .25 + c2 * .25 + c3 * .25 + c4 * .25;
-}
-
-vec4 sampleN(vec2 coord, uint n) {
+vec3 sampleN(vec2 coord, uint n) {
     int intn = int(n);
     int intn2 = intn / 2;
     float fn = float(n);
-    vec4 result = vec4(.0, .0, .0, .0);
+    vec3 result = vec3(.0, .0, .0);
     for (int i = -intn2; i <= intn2; ++i) {
         for (int j = -intn2; j <= intn2; ++j) {
-            vec4 sampl = col(coord + vec2(1.0 / (fn + 2) * i, 1.0 / (fn + 2) * j));
+            vec3 sampl = col(coord + vec2(1.0 / (fn + 2) * i, 1.0 / (fn + 2) * j));
             result += sampl;
         }
     }
@@ -158,5 +149,7 @@ vec4 sampleN(vec2 coord, uint n) {
 void main(void) {
     vec2 coord = gl_FragCoord.xy;
 
-    color = sampleN(coord, 3);
+    color = vec4(sampleN(coord, 3), 1);
+
+    //color += vec4(0, is2ndBuffer, 0, 0);
 }

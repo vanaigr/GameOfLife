@@ -34,8 +34,8 @@ vec2 applyLensDistortion(vec2 coord, float intensity) {
 }
 
 
-vec4 colorForCoordsChromaticAbberation(dvec2 coord, float caIntens) {
-    vec2 newCoord = applyLensDistortion(vec2(coord), caIntens);
+vec4 colorForCoordsChromaticAbberation(dvec2 coord, double caIntens) {
+    vec2 newCoord = applyLensDistortion(vec2(coord), float(caIntens));
     return colorForCoords(newCoord);
 }
 
@@ -43,8 +43,8 @@ vec4 col(vec2 coord) {
     vec2 distortedCoord = coord;// applyLensDistortion(coord, lensDistortion + (deltaScaleChange / 5.0));
 
     float red = colorForCoordsChromaticAbberation(distortedCoord, 0).r;
-    float green = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 15.0 / size, -0.004 - deltaScaleChange / 9.0).g;
-    float blue = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 15.0 / size, -0.004 - deltaScaleChange / 9.0).b;
+    float green = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 13.0 / size, -0.004 - deltaScaleChange / 4.0 / size).g;
+    float blue = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 13.0 / size, -0.004 - deltaScaleChange / 4.0 / size).b;
 
     return vec4(red, green, blue, 1.0);
 }
