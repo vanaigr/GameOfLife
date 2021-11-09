@@ -39,32 +39,41 @@ vec4 colorForCoordsChromaticAbberation(dvec2 coord, double caIntens) {
     return colorForCoords(newCoord);
 }
 
-vec4 col(vec2 coord) {
+vec3 col(vec2 coord) {
     vec2 distortedCoord = coord;// applyLensDistortion(coord, lensDistortion + (deltaScaleChange / 5.0));
 
     float red = colorForCoordsChromaticAbberation(distortedCoord, 0).r;
-    float green = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 13.0 / size, -0.004 - deltaScaleChange / 4.0 / size).g;
-    float blue = colorForCoordsChromaticAbberation(distortedCoord - deltaOffsetChange / 13.0 / size, -0.004 - deltaScaleChange / 4.0 / size).b;
+    float green = colorForCoordsChromaticAbberation(distortedCoord + deltaOffsetChange / 13.0 / size, -0.004 + deltaScaleChange / 6.0 / size).g;
+    float blue = colorForCoordsChromaticAbberation(distortedCoord + deltaOffsetChange / 13.0 / size, -0.004 + deltaScaleChange / 6.0 / size).b;
 
-    return vec4(red, green, blue, 1.0);
+    return vec3(red, green, blue);
 }
 
-vec4 sampleN(vec2 coord, uint n) {
-    int intn = int(n);
-    int intn2 = intn / 2;
+float rand(vec2 co) {
+    return fract(sin(dot(co + vec2(11111.0, 22222.0), vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+vec3 sampleN(vec2 coord, uint n) {
+    vec2 pixelCoord = floor(coord);
     float fn = float(n);
-    vec4 result = vec4(.0, .0, .0, .0);
-    for (int i = -intn2; i <= intn2; ++i) {
-        for (int j = -intn2; j <= intn2; ++j) {
-            vec4 sampl = col(coord + vec2(1.0 / (fn + 2) * i, 1.0 / (fn + 2) * j));
+
+    vec3 result = vec3(0, 0, 0);
+    for (uint i = 1; i <= n; i++) {
+        for (uint j = 1; j <= n; j++) {
+            vec2 coord = pixelCoord + vec2(i / fn, j / fn);
+            vec2 offset = vec2(rand(coord.xy), rand(coord.yx)) / fn;
+            coord -= offset;
+
+            vec3 sampl = col(coord);
             result += sampl;
         }
     }
+
     return result / (fn * fn);
 }
 
 void main(void) {
     vec2 coord = gl_FragCoord.xy;
 
-    color = sampleN(coord, 3);
+    color = vec4(sampleN(coord, 2), 1.0);
 }

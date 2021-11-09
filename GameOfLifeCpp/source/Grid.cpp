@@ -53,6 +53,7 @@ private:
 	const uint32_t startPadding_int;
 	const uint32_t endPadding_int;
 	const uint32_t fullSize_int;
+
 	std::unique_ptr<uint32_t[]> current_; 
 	std::unique_ptr<uint32_t[]> buffer_;
 
@@ -166,14 +167,14 @@ public:
 	}
 
 	template<typename gridType = current>
-	void fill(const FieldCell cell) {
+	void fill(FieldCell const cell) {
 		auto* grid{ getGrid<gridType>() };
 		const auto val = ~0u * fieldCell::isAlive(cell);
 		std::fill(&grid[0], &grid[0] + fullSize_int, val);
 	}
 
 	template<typename gridType = current>
-	bool isCellAlive(const int32_t index) const {
+	bool isCellAlive(int32_t const index) const {
 		auto* grid{ getGrid<gridType>() };
 		const auto row = index / int32_t(width_grid);
 		const auto col = misc::mod(index, width_grid);
@@ -185,7 +186,7 @@ public:
 	}
 
 	template<typename gridType = current>
-	bool isCellAlive_actual(const int32_t index) const {
+	bool isCellAlive_actual(int32_t const index) const {
 		auto* grid{ getGrid<gridType>() };
 
 		const auto offset = index / int32_t(batchSize);
@@ -195,12 +196,12 @@ public:
 	}
 
 	template<typename gridType = current>
-	FieldCell cellAt(const int32_t index) const {
+	FieldCell cellAt(int32_t const index) const {
 		return isCellAlive<gridType>(index) ? FieldCell::ALIVE : FieldCell::DEAD;
 	}
 
 	template<typename gridType = current>
-	void setCellAt(const int32_t index, const FieldCell cell) const {
+	void setCellAt(int32_t const index, FieldCell const cell) {
 		auto* grid{ getGrid<gridType>() };
 
 		const auto row = index / width_grid;
@@ -215,7 +216,7 @@ public:
 	}/* tested */
 
 	template<typename gridType = current>
-	uint32_t& getCellsInt(int32_t index) {
+	uint32_t& getCellsInt(int32_t const index) const {
 		auto* grid{ getGrid<gridType>() };
 		const auto row = index / int32_t(width_grid);
 		const auto col = misc::mod(index, width_grid);
@@ -226,11 +227,11 @@ public:
 	}
 
 	template<typename gridType = current>
-	uint32_t& getCellsActual_int(int32_t index_actual_int) {
+	uint32_t& getCellsActual_int(int32_t const index_actual_int) const {
 		return getGrid<gridType>()[index_actual_int + startPadding_int];
 	}
 
-	uint32_t indexAsActualInt(const uint32_t index) {
+	uint32_t indexAsActualInt(const uint32_t index) const {
 		const auto row = index / int32_t(width_grid);
 		const auto col = misc::mod(index, width_grid);
 
@@ -318,37 +319,31 @@ public:
 
  static void threadUpdateGrid(Field::GridData& data) {
 	 Timer<> t{};
-	 auto& grid = data.grid;
-	 const int32_t width_grid = static_cast<int32_t>(grid->width_grid);
-	 const int32_t width_actual = static_cast<int32_t>(grid->width_actual);
-	 const int32_t height = static_cast<int32_t>(grid->height);
-	 const int lastElement = width_grid - 1;
+	 auto& grid = *data.grid.get();
+	 int32_t const width_grid = static_cast<int32_t>(grid.width_grid);
+	 int32_t const width_actual = static_cast<int32_t>(grid.width_actual);
+	 int32_t const width_int = static_cast<int32_t>(grid.width_int);
 
-	 const auto setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid->setCellAt<Field::FieldPimpl::buffer>(index, cell); };
+
+	 const auto setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid.setCellAt<Field::FieldPimpl::buffer>(index, cell); };
 
 	 struct remainder {
 		 uint16_t cellsCols;
 		 uint8_t curCell;
 	 };
 
-	 const auto calcNewGen_batch = [&grid](
+	 const auto calcNewGen_batch = [&grid, width_int](
 		 const remainder previousRemainder,
 		 uint32_t index_batch,
 		 remainder& currentRemainder_out
 		 ) -> uint32_t {
-			 const auto isCellAlive = [&grid](uint32_t index) -> bool { return grid->isCellAlive(index); };
 			 const auto put32At4Bits = [](const uint32_t number) -> __m128i {
-				 const __m128i indecesLower = _mm_slli_si128(_mm_set1_epi8(1), 8); // lower...higher: 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 
-				 const __m128i indecesHigher = _mm_add_epi8(indecesLower, _mm_set1_epi8(2));
-
-				 const __m128i num = _mm_set1_epi32(number);
-
-				 const auto extract4BitsAndMask = [](
-					 const __m128i num, const uint8_t bitMask, const __m128i indeces
+				 const auto extract16andMask = [](
+					 const __m128i num, const __m128i indeces, const uint8_t bitMask
 					 ) -> __m128i {
-					 const auto high_low_bytesToLontTo128 = [](const uint8_t b1, const uint8_t b2, const  uint8_t b3, const uint8_t b4,
-						 const uint8_t b5, const uint8_t b6, const  uint8_t b7, const uint8_t b8) -> __m128i {
-						 return _mm_set1_epi64x(
+					 const auto low_high_bytesToLong = [](const uint8_t b1, const uint8_t b2, const  uint8_t b3, const uint8_t b4,
+						 const uint8_t b5, const uint8_t b6, const  uint8_t b7, const uint8_t b8) -> uint64_t {
+						 return 
 							 (uint64_t(b1) << 8 * 0)
 							 | (uint64_t(b2) << 8 * 1)
 							 | (uint64_t(b3) << 8 * 2)
@@ -356,9 +351,9 @@ public:
 							 | (uint64_t(b5) << 8 * 4)
 							 | (uint64_t(b6) << 8 * 5)
 							 | (uint64_t(b7) << 8 * 6)
-							 | (uint64_t(b8) << 8 * 7));
+							 | (uint64_t(b8) << 8 * 7);
 					 };
-					 const __m128i mask = high_low_bytesToLontTo128(1, 2, 4, 8, 16, 32, 64, 128);
+					 const __m128i mask = _mm_set1_epi64x(low_high_bytesToLong(1, 2, 4, 8, 16, 32, 64, 128));
 					 return
 						 _mm_and_si128(
 							 _mm_cmpeq_epi8(
@@ -374,174 +369,172 @@ public:
 							 _mm_set1_epi8(bitMask));
 				 };
 
+				 const __m128i indecesLower = _mm_slli_si128(_mm_set1_epi8(1), 8); // lower->higher: 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 
+				 const __m128i indecesHigher = _mm_add_epi8(indecesLower, _mm_set1_epi8(2));
 
-				 const __m128i resultlower4 = extract4BitsAndMask(num, 0b1, indecesLower);
-				 const __m128i resultHigher4 = extract4BitsAndMask(num, 0b1 << 4, indecesHigher);
+				 const __m128i num = _mm_set1_epi32(number); /* const __m128i num = _mm_castps_si128(_mm_load1_ps((float*)ptr_to_number)) is slower */
+
+				 const __m128i resultlower4  = extract16andMask(num, indecesLower, 0b1u);
+				 const __m128i resultHigher4 = extract16andMask(num, indecesHigher, 0b1u << 4);
 
 				 return _mm_or_si128(resultlower4, resultHigher4);
 			 };
 
-			 const auto shiftLeft1Data = [](const __m128i data) -> __m128i {
-				 const auto carry =
-					 _mm_and_si128(
-						 _mm_srli_si128(_mm_slli_epi16(data, 4), 15), _mm_set1_epi8(0b11110000u)
-					 ); static_assert(
-						 "_mm_srli_epi8(_mm_bslli_si128(sum, 15), 4)",
-						 "lack of _mm_srli_epi8() !");
-				 return _mm_add_epi8(
-					 _mm_slli_si128(data, 1),
-					 carry
-				 );
-			 };
-
-			 const auto bits4To32 = [](const __m128i bits4) -> uint32_t {
-				 const __m128i maskLower4 = _mm_set1_epi8(0b00000001u);
-				 const __m128i maskHigher4 = _mm_set1_epi8(0b00010000u);
-
-				 uint32_t lower16 { static_cast<std::make_unsigned<int>::type>(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(bits4, maskLower4 ), maskLower4 ))) };
-				 uint32_t higher16{ static_cast<std::make_unsigned<int>::type>(_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_and_si128(bits4, maskHigher4), maskHigher4))) };
-				 /*
-				 faster than _mm_slli_epi16(bits4, 7) for lower bits and _mm_slli_epi16(bits4, 3) for higher
-				 */
-
-				 return lower16 | (higher16 << 16);
-			 };
-
-			 static_assert(batchSize > 1, "sizeOfBatch = 0, 1 doesnt make sense");
-			 const auto width_grid = grid->width_grid;
-			 const auto width_actual = grid->width_actual;
-			 const auto width_int = grid->width_int;
-
-			 const uint32_t topCellRow_uint_{ grid->getCellsActual_int(index_batch - width_int) };
-			 const uint32_t curCellRow_uint_{ grid->getCellsActual_int(index_batch) };
-			 const uint32_t botCellRow_uint_{ grid->getCellsActual_int(index_batch + width_int) };
+			 const uint32_t topCellRow_uint_{ grid.getCellsActual_int(index_batch - width_int) };
+			 const uint32_t curCellRow_uint_{ grid.getCellsActual_int(index_batch) };
+			 const uint32_t botCellRow_uint_{ grid.getCellsActual_int(index_batch + width_int) };
 
 			 const __m128i topCellRow_ = put32At4Bits(topCellRow_uint_);
 			 const __m128i curCellRow_ = put32At4Bits(curCellRow_uint_);
 			 const __m128i botCellRow_ = put32At4Bits(botCellRow_uint_);
 
-			 const __m128i cellsInCols_ = _mm_add_epi8(topCellRow_, _mm_add_epi8(curCellRow_, botCellRow_));
+			 const __m128i cellsInCols_ = _mm_add_epi8(topCellRow_, _mm_add_epi8(curCellRow_, botCellRow_)); /* _mm_add_epi8(_mm_add_epi8(topCellRow_, curCellRow_), botCellRow_) is slower */
 
-			 currentRemainder_out.cellsCols = (cellsInCols_.m128i_i16[7] & 0b11110000'11110000) >> 4;
 			 currentRemainder_out.curCell = (curCellRow_.m128i_i8[15] & 0b11110000) >> 4;
+			 currentRemainder_out.cellsCols = (cellsInCols_.m128i_i16[7] & 0b11110000'11110000) >> 4;
 
-			 const __m128i cellsInCols_sl1_ = shiftLeft1Data(cellsInCols_);
-			 const __m128i cellsInCols_sl2_ = shiftLeft1Data(cellsInCols_sl1_);
+
+			 __m128i const mask = _mm_set1_epi8(0b00001111u);
+			 auto const cellsInCols__carry = _mm_slli_epi16(_mm_and_si128(cellsInCols_, mask), 4);
+
+			 const __m128i cellsInCols_sl1_ = _mm_alignr_epi8(cellsInCols_, cellsInCols__carry, 15);
+			 const __m128i cellsInCols_sl2_ = _mm_alignr_epi8(cellsInCols_, cellsInCols__carry, 14);
 			 const __m128i cells3by3 =
 				 _mm_add_epi8(
 					 _mm_add_epi8(
 						 _mm_add_epi8(
-							 cellsInCols_,
+							 cellsInCols_sl2_,
 							 cellsInCols_sl1_
 						 ),
-						 cellsInCols_sl2_
+						 cellsInCols_
 					 ),
-					 _mm_srli_si128(
-						 _mm_set1_epi16(previousRemainder.cellsCols + (previousRemainder.cellsCols >> 8))
-						 , 14
-					 )
-				 );
-			 const __m128i curCellRow = _mm_add_epi8(shiftLeft1Data(curCellRow_), _mm_srli_si128(_mm_set1_epi8(previousRemainder.curCell), 15));
+					_mm_srli_si128(
+						_mm_set1_epi16(previousRemainder.cellsCols + (previousRemainder.cellsCols >> 8))
+						, 14
+					)/* _mm_cvtsi32_si128(previousRemainder.cellsCols + (previousRemainder.cellsCols >> 8)) is slower */
+			 );
+			 
+			 __m128i const curCellRow__carry = _mm_slli_epi16(_mm_and_si128(curCellRow_, mask), 4);
+			 __m128i const curCellRow = _mm_or_si128(_mm_alignr_epi8(curCellRow_, curCellRow__carry, 15), _mm_srli_si128(_mm_set1_epi8(previousRemainder.curCell), 15));
+			 /* using _mm_or_si128 instead of _mm_add_epi8 is safe because previousRemainder.curCell is in lower 4 bits and shifted curCellRow_ is in higher 4 */
 
-			 const __m128i cellsNeighboursAlive = _mm_sub_epi8(cells3by3, curCellRow);
+			 __m128i const cellsNeighboursAlive = _mm_sub_epi8(cells3by3, curCellRow);
 
-			 const __m128i aliveCell = _mm_set1_epi8(0b00010001);
+			 __m128i const cells = _mm_or_si128(cellsNeighboursAlive, curCellRow);
+			 static_assert(
+				 (2 | 1) == 3 &&
+				 (3 | 1) == 3 &&
+				 (3 | 0) == 3 &&
+				 true,
+				 R"( must be true:
+				 1, 2) (2 or 3 cells) | (alive cell) == 3
+				 3) (3 cells) | (dead  cell) == 3
+				 4) other combitations != 3
+				 )"
+			);
 
-			 const __m128i isDead_aliveBits = _mm_andnot_si128(curCellRow, aliveCell); 
-			 const __m128i isAlive_aliveBits = curCellRow;
+			 __m128i const mask_lower = _mm_set1_epi8(0b1111u);
+			 __m128i const three = _mm_set1_epi8(3u);
 
-			 const __m128i maskLower = _mm_set1_epi8(0b1111u);
-			 const __m128i maskHigher = _mm_set1_epi8(0b1111u << 4);
+			uint32_t const lower16{ static_cast<std::make_unsigned<int>::type>(
+					_mm_movemask_epi8(
+						_mm_cmpeq_epi8(
+							_mm_and_si128(mask_lower, cells), 
+							three
+						)
+					)
+				) 
+			};
 
-			 const __m128i cellsNeighboursAliveLower = _mm_and_si128(cellsNeighboursAlive, maskLower);
-			 const __m128i is2AliveLower = _mm_and_si128(_mm_cmpeq_epi8(cellsNeighboursAliveLower, _mm_set1_epi8(2u)), maskLower);
-			 const __m128i is3AliveLower = _mm_and_si128(_mm_cmpeq_epi8(cellsNeighboursAliveLower, _mm_set1_epi8(3u)), maskLower);
+			uint32_t const higher16{ static_cast<std::make_unsigned<int>::type>(
+					_mm_movemask_epi8(
+						_mm_cmpeq_epi8(
+							_mm_andnot_si128(mask_lower, cells),
+							_mm_slli_epi16(three, 4)
+						)
+					)
+				)
+			};
 
-			 const __m128i cellsNeighboursAliveHigher = _mm_and_si128(cellsNeighboursAlive, maskHigher);
-			 const __m128i is2AliveHigher = _mm_and_si128(_mm_cmpeq_epi8(cellsNeighboursAliveHigher, _mm_set1_epi8(2u << 4)), maskHigher);
-			 const __m128i is3AliveHigher = _mm_and_si128(_mm_cmpeq_epi8(cellsNeighboursAliveHigher, _mm_set1_epi8(3u << 4)), maskHigher);
-
-			 const __m128i is2Alive = _mm_or_si128(is2AliveLower, is2AliveHigher);
-			 const __m128i is3Alive = _mm_or_si128(is3AliveLower, is3AliveHigher);
-
-			 const __m128i newGen =
-				 _mm_or_si128(
-					 _mm_and_si128(
-						 isAlive_aliveBits,
-						 _mm_or_si128(is2Alive, is3Alive)
-					 ),
-					 _mm_and_si128(
-						 isDead_aliveBits,
-						 is3Alive
-					 )
-				 );
-
-			 const uint32_t newGen_uint = bits4To32(newGen);
-			 return newGen_uint;
-	 };
-
-	 const auto isCell = [&grid](int32_t index) -> bool {
-		 return grid->isCellAlive(index);
+			 return lower16 | (higher16 << 16);
 	 };
 
 	 const auto isCell_actual = [&grid](int32_t index) -> bool {
-		 return grid->isCellAlive_actual(index);
+		 return grid.isCellAlive_actual(index);
 	 };
 
-	 const auto cellAt = [&grid](int32_t index) -> FieldCell {
-		 return grid->isCellAlive(index) ? FieldCell::ALIVE : FieldCell::DEAD;
-	 };
 
-	 const int32_t startBatch = data.startBatch;
-	 const int32_t endBatch = data.endBatch;
-	 const int32_t startIndex = startBatch * batchSize;
-	 const int32_t endIndex = endBatch * batchSize; //may be out of grid bounds. Padding after grid required
+	 int32_t const startBatch = data.startBatch;
+	 int32_t const endBatch = data.endBatch;
+	 int32_t const startIndex = startBatch * batchSize;
+	 int32_t const endIndex = endBatch * batchSize; //may be out of bounds padding required
 
-	 int32_t i_batch = startBatch;
+	 int32_t i = startBatch;
 
-	 const auto i_a = [=]() -> int32_t { 
-		 return i_batch * batchSize; 
-	 };
+	 int32_t i_actual_grid = i * batchSize; 
+	 
 
 	 remainder previousRemainder{
-		 isCell_actual(i_a() - 2 - width_actual) +
-		 isCell_actual(i_a() - 2 + 0) +
-		 isCell_actual(i_a() - 2 + width_actual) +
+		 isCell_actual(i_actual_grid - 2 - width_actual) +
+		 isCell_actual(i_actual_grid - 2 + 0) +
+		 isCell_actual(i_actual_grid - 2 + width_actual) +
 		 (
 			 uint16_t(
-				 isCell_actual(i_a() - 1 - width_actual) +
-				 isCell_actual(i_a() - 1 + 0) +
-				 isCell_actual(i_a() - 1 + width_actual))
+				 isCell_actual(i_actual_grid - 1 - width_actual) +
+				 isCell_actual(i_actual_grid - 1 + 0) +
+				 isCell_actual(i_actual_grid - 1 + width_actual))
 			 << 8
 			 ),
-		 isCell(i_a())
+		 isCell_actual(i_actual_grid)
 	 }; //out of bounds, paddint of width + 1 required
 
 	 uint64_t newGenWindow = 0;
-	 for (const uint32_t j_count = 8; (i_batch + j_count) < endBatch + 1;) { //endIndex + 1 is because of last celll is not updated
-		 for (uint32_t j = 0; j < j_count; ++j, ++i_batch) {
-			 const uint32_t newGen = calcNewGen_batch(previousRemainder, i_batch, previousRemainder/*out param*/);
+
+	 if (i < endBatch + 1) {
+		 const uint32_t newGen = calcNewGen_batch(previousRemainder, i, previousRemainder/*out param*/);
+
+		 newGenWindow = (newGenWindow >> 32) | (uint64_t(newGen) << 31);
+
+		 ++i;
+	 }
+
+	 for (const uint32_t j_count = 32; (i + j_count) < endBatch + 1;) {
+		 for (uint32_t j = 0; j < j_count; ++j, ++i) {
+			 const uint32_t newGen = calcNewGen_batch(previousRemainder, i, previousRemainder/*out param*/);
 
 			 newGenWindow = (newGenWindow >> 32) | (uint64_t(newGen) << 31);
-			 grid->getCellsActual_int<Field::FieldPimpl::buffer>(i_batch - 1) = uint32_t(newGenWindow);
+			 grid.getCellsActual_int<Field::FieldPimpl::buffer>(i - 1) = uint32_t(newGenWindow);
+
+			 //_mm_stream_si32((int*)&grid.getCellsActual_int<Field::FieldPimpl::buffer>(i_batch - 1), (int)uint32_t(newGenWindow));
 		 }
 
 		 if (data.interrupt_flag.load()) return;
 	 }
 
-	 for (; i_batch < endBatch + 1; ++i_batch) {
-		 const uint32_t newGen = calcNewGen_batch(previousRemainder, i_batch, previousRemainder/*out param*/);
+	 for (; i < endBatch + 1; ++i) {
+		 const uint32_t newGen = calcNewGen_batch(previousRemainder, i, previousRemainder/*out param*/);
 
 		 newGenWindow = (newGenWindow >> 32) | (uint64_t(newGen) << 31);
-		 grid->getCellsActual_int<Field::FieldPimpl::buffer>(i_batch - 1) = uint32_t(newGenWindow);
+		 grid.getCellsActual_int<Field::FieldPimpl::buffer>(i - 1) = uint32_t(newGenWindow);
 	 }
 
 	 if (data.interrupt_flag.load()) return;
 
-	 const uint32_t startRow = startIndex / width_actual;
-	 const uint32_t endRow = misc::min<uint32_t>(misc::intDivCeil(endIndex + 1, width_actual), height);
 
-	 if (grid->edgeCellsOptimization == false) {
+	 if (grid.edgeCellsOptimization == false) {
+		 uint32_t const height = grid.height;
+		 int32_t  const lastElement = width_grid - 1;
+
+		 const uint32_t startRow = startIndex / width_actual;
+		 const uint32_t endRow = misc::min<uint32_t>(misc::intDivCeil(endIndex + 1, width_actual), height);
+
+		 const auto isCell = [&grid](int32_t index) -> bool {
+			 return grid.isCellAlive(index);
+		 };
+		 const auto cellAt = [&grid](int32_t index) -> FieldCell {
+			 return grid.cellAt(index);
+		 };
+
 		 {
 			 uint8_t //top/cur/bot + first/second/last
 				 tf = isCell(-width_grid),
@@ -621,7 +614,7 @@ public:
 
 	 Timer<> t2{};
 	 
-	 data.buffer_output->write(FieldModification{ data.startBatch, data.endBatch - data.startBatch, &grid->getCellsActual_int<Field::FieldPimpl::buffer>(startBatch) });
+	 data.buffer_output->write(FieldModification{ data.startBatch, data.endBatch - data.startBatch, &grid.getCellsActual_int<Field::FieldPimpl::buffer>(startBatch) });
 
 	 data.bufferSend.add(t2.elapsedTime());
 

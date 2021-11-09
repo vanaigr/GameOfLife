@@ -64,7 +64,7 @@ const double screenUpdateTimeMs = 1000.0 / screenUpdatesPerSecond;
 
 const double chasingSpeed = .4;
 double deltaSizeChange = 0;
-double desiredSize = 4.0, currentSize = desiredSize;
+double desiredSize = 0.2, currentSize = desiredSize;
 
 vec2<double> deltaPosChange(0, 0);
 vec2<double> desiredPosition(0, 0), currentPosition = desiredPosition;
@@ -297,7 +297,7 @@ void updateState() {
 				const vec2i offset{ xo, yo };
 				const auto coord = cell + offset;
 				if (paintMode == PaintMode::PAINT) {
-					grid->setCellAtCoord(cell, FieldCell::ALIVE);
+					grid->setCellAtCoord(cell + offset, FieldCell::ALIVE);
 				}
 				else if (paintMode == PaintMode::DELETE) {
 					grid->setCellAtCoord(coord + offset, FieldCell::DEAD);
@@ -350,9 +350,6 @@ int main(void)
 
 	if (!glfwInit())
 		return -1;
-
-	//glfwWindowHint(GLFW_SAMPLES, 121);
-	//glEnable(GL_MULTISAMPLE);
 
 #ifdef FULLSCREEN
 	window = glfwCreateWindow(windowWidth, windowHeight, "Game ofLife", glfwGetPrimaryMonitor(), NULL);
@@ -558,7 +555,7 @@ int main(void)
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, isWritingSecondBuffer);
+			glUniform1ui(is2ndBufferP, !isWritingSecondBuffer);
 
 			glFinish();
 

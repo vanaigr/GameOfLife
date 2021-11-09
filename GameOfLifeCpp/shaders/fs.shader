@@ -116,8 +116,8 @@ vec3 colorForCoords(vec2 screenCoords) {
     vec3 bkg = float(isNothing) * bkgColor;
     vec3 cellPadding = float(isCell) * float(isPadding) * bkgColor;
     vec3 col = cell + bkg + cellPadding;
-    col = mix(col, vec3(.5, .5, .5), edgeMask);
-    col = mix(col, vec3(.5, .5, .5), isPadding);
+    //col = mix(col, vec3(.5, .5, .5), edgeMask);
+    //col = mix(col, vec3(.5, .5, .5), isPadding);
     return col;
 }
 
@@ -127,29 +127,38 @@ vec3 colorForCoordsChromaticAbberation(vec2 coord, float caIntens) {
 }
 
 vec3 col(vec2 coord) {
-    vec2 distortedCoord = applyLensDistortion(coord, lensDistortion + (deltaScaleChange / 5));
+    vec2 distortedCoord = applyLensDistortion(coord, lensDistortion + (deltaScaleChange / 5.0));
 
     return colorForCoords(distortedCoord);
 }
 
+float rand(vec2 co) {
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
 vec3 sampleN(vec2 coord, uint n) {
-    int intn = int(n);
-    int intn2 = intn / 2;
+    vec2 pixelCoord = floor(coord);
     float fn = float(n);
-    vec3 result = vec3(.0, .0, .0);
-    for (int i = -intn2; i <= intn2; ++i) {
-        for (int j = -intn2; j <= intn2; ++j) {
-            vec3 sampl = col(coord + vec2(1.0 / (fn + 2) * i, 1.0 / (fn + 2) * j));
+
+    vec3 result = vec3(0, 0, 0);
+    for (uint i = 1; i <= n; i++) {
+        for (uint j = 1; j <= n; j++) {
+            vec2 coord = pixelCoord + vec2(i / fn, j / fn);
+            vec2 offset = vec2(rand(coord.xy), rand(coord.yx)) / fn;
+            coord -= offset;
+
+            vec3 sampl = col(coord);
             result += sampl;
         }
     }
+
     return result / (fn * fn);
 }
 
 void main(void) {
     vec2 coord = gl_FragCoord.xy;
 
-    color = vec4(sampleN(coord, 3), 1);
+    color = vec4(sampleN(coord, 2), 1);
 
     //color += vec4(0, is2ndBuffer, 0, 0);
 }
