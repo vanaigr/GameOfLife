@@ -26,6 +26,7 @@ private:
 	std::mutex startLock;
 	std::condition_variable startWork;
 	std::atomic_bool workStarted{ false }, workEnded{ false };
+	volatile bool continueThread { true };
 
 	std::thread thread;
 	std::chrono::time_point<std::chrono::steady_clock> startTime = std::chrono::steady_clock::now();
@@ -35,8 +36,13 @@ public:
 
 	Task(const Task&) = delete;
 	Task& operator=(Task const&) = delete;
-	~Task() {
-		waitForResult();
+	~Task() noexcept {
+		{
+			std::lock_guard<std::mutex> lk{ startLock };
+			continueThread = false;
+			startWork.notify_one();
+		}
+		thread.join();
 	}
 public:
 	void start() noexcept;
@@ -47,9 +53,11 @@ private:
 
 template<class Data>
 void Task<Data>::task_() noexcept {
-	while (true) {
+	bool exit_ = continueThread;
+	while (exit_) {
 		std::unique_lock<std::mutex> lock{ startLock };
-		startWork.wait(lock , [this]() { return workStarted.load() == true; });
+		startWork.wait(lock , [this, &exit_]() { return workStarted.load() == true || (exit_ = !continueThread); });
+		if (exit_) return;
 		job(data);
 		workStarted.store(false);
 		workEnded.store(true);
@@ -61,7 +69,7 @@ void Task<Data>::start() noexcept {
 	std::lock_guard<std::mutex> lk{ startLock };
 	workEnded.store(false);
 	workStarted.store(true);
-	startWork.notify_all();
+	startWork.notify_one();
 }
 
 template<class Data>
