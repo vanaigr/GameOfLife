@@ -8,6 +8,8 @@ struct vec2
 	C x, y;
 
 public:
+	constexpr vec2() = default;
+	constexpr vec2(const C value) : x(value), y(value) {};
 	constexpr vec2(const C x_, const C y_) : x(x_), y(y_) {};
 
 	inline constexpr vec2<C> operator+(const vec2<C>& o) const {
@@ -38,6 +40,18 @@ public:
 		x -= o.x;
 		y -= o.y;
 		return *this;
+	}
+
+	inline constexpr C dot(vec2<C> o) const {
+		return x * o.x + y * o.y;
+	}
+
+	inline constexpr C lengthSuqare() const {
+		return this->dot(*this);
+	}
+
+	inline constexpr C length() const {
+		return sqrt(this->lengthSuqare());
 	}
 };
 

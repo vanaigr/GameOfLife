@@ -38,11 +38,21 @@ struct FieldModification {
 
 class FieldOutput {
 public:
-	virtual void write(FieldModification) = 0;
+	virtual void write(FieldModification fm) {
+		this->batched()->write(fm);
+	}
+
+	virtual std::unique_ptr<FieldOutput> batched() const = 0;
 	virtual ~FieldOutput() = default;
 
 };//must be used as output only in one thread
 
+
+
+struct Cell {
+	FieldCell cell;
+	int32_t index;
+};
 class Field final {
 public:
 	class FieldPimpl;
@@ -75,16 +85,17 @@ public:
 
 	void setCellAtIndex(const uint32_t index, FieldCell cell);
 	void setCellAtCoord(const vec2i& coord, FieldCell cell);
+	void setCells(Cell const *const cells, size_t const count);
 
 	FieldCell cellAtCoord(const vec2i& coord) const;
 	FieldCell cellAtCoord(const int32_t column, const int32_t row) const;
 
 	vec2i indexAsCoord(const int32_t index) const;
 
-	uint32_t coordAsIndex(const vec2i& coord) const;
-	uint32_t coordAsIndex(const int32_t column, const int32_t row) const;
+	int32_t coordAsIndex(const vec2i& coord) const;
+	int32_t coordAsIndex(const int32_t column, const int32_t row) const;
 	
-	uint32_t normalizeIndex(const int32_t index) const;
+	int32_t normalizeIndex(const int32_t index) const;
 	vec2i normalizeCoord(const vec2i& coord) const;
 
 	uint32_t width() const;
@@ -122,17 +133,17 @@ inline vec2i Field::indexAsCoord(const int32_t index) const {
 	return vec2i(x, y);
 }
 
-inline uint32_t Field::coordAsIndex(const vec2i& coord) const {
+inline int32_t Field::coordAsIndex(const vec2i& coord) const {
 	const auto coord_n = normalizeCoord(coord);
 	return coord_n.x + coord_n.y * width();
 }
 
-inline uint32_t Field::coordAsIndex(const int32_t column, const int32_t row) const {
+inline int32_t Field::coordAsIndex(const int32_t column, const int32_t row) const {
 	return coordAsIndex(vec2i(column, row));
 }
 
-inline uint32_t Field::normalizeIndex(const int32_t index) const {
-	return misc::umod(index, static_cast<uint32_t>(size()));
+inline int32_t Field::normalizeIndex(const int32_t index) const {
+	return misc::mod(index, static_cast<int32_t>(size()));
 }
 inline vec2i Field::normalizeCoord(const vec2i& coord) const {
 	return vec2i(misc::mod(coord.x, width()), misc::mod(coord.y, height()));

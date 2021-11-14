@@ -20,10 +20,10 @@
 
 #include"ShaderLoader.h"
 
-#include "data.h"
-
 #include<atomic>
 #include<mutex>
+
+#include<vector>
 
 #include<type_traits>
 
@@ -49,7 +49,7 @@ const uint32_t windowWidth = 800, windowHeight = 800;
 
 const vec2<double> windowSize{ windowWidth, windowHeight };
 
-const uint32_t gridWidth = 2'000, gridHeight = 2'000;
+const uint32_t gridWidth = 32, gridHeight = 32;
 const uint32_t gridSize = gridWidth * gridHeight;
 const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
@@ -57,18 +57,6 @@ std::unique_ptr<Field> grid;
 const double cellSize_px = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
 
 bool gridUpdate = true;
-
-std::chrono::steady_clock::time_point lastScreenUpdateTime;
-const uint32_t screenUpdatesPerSecond = 40;
-const double screenUpdateTimeMs = 1000.0 / screenUpdatesPerSecond;
-
-const double chasingSpeed = .4;
-double deltaSizeChange = 0;
-double desiredSize = 0.2, currentSize = desiredSize;
-
-vec2<double> deltaPosChange(0, 0);
-vec2<double> desiredPosition(0, 0), currentPosition = desiredPosition;
-
 
 float lensDistortion = 0.17;
 
@@ -86,7 +74,7 @@ PaintMode paintMode = PaintMode::NONE;
 vec2<double> mousePos(0, 0), pmousePos(0, 0);
 
 std::chrono::steady_clock::time_point lastGridUpdateTime;
-uint32_t gridUpdatesPerSecond = 10;
+uint32_t gridUpdatesPerSecond = 2;
 
 std::chrono::steady_clock::time_point curTime;
 float r1 = 1; //w key not pressed
@@ -96,10 +84,24 @@ float r2 = 0; //normalized mouseX
 GLuint frameBuffer, frameBufferTexture;
 
 
-static GLuint fieldBufferHandle;
+std::chrono::steady_clock::time_point lastScreenUpdateTime;
+const uint32_t screenUpdatesPerSecond = 40;
+const double screenUpdateTimeMs = 1000.0 / screenUpdatesPerSecond;
+
+const double chasingSpeed = .4;
+
+double desiredDeltaSizeChange = 0, deltaSizeChange = 0;
+double desiredSize = 0.2, currentSize = desiredSize;
+vec2<double> desiredDeltaPosChange{ 0, 0 }, deltaPosChange(0, 0);
+bool isZoomChanged { false };
+
+vec2<double> desiredPosition{ }, currentPosition{ desiredPosition };
+vec2<double> desiredZoomPoint{ mousePos }, zoomPoint{ desiredZoomPoint };
+
+static GLuint packedGrid1 = 0, packedGrid2 = 0;
 static size_t field_size_bytes;
-static bool isWritingSecondBuffer = true;
-static std::atomic_bool gpuBufferLock_flag{ false };
+static std::atomic_bool isBufferSecond{ true };
+static std::mutex gpuBufferLock{ };
 
 
 void printMouseCellInfo();
@@ -130,7 +132,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		exit(0);
 	}
 	if (key == GLFW_KEY_W && action == GLFW_PRESS) r1 = 0;
-	if (key == GLFW_KEY_Q && action == GLFW_PRESS) isWritingSecondBuffer = !isWritingSecondBuffer;
+	if (key == GLFW_KEY_Q && action == GLFW_PRESS) isBufferSecond = !isBufferSecond;
 	else if(key == GLFW_KEY_W && action == GLFW_RELEASE) r1 = 1;
 	if (action == GLFW_PRESS) {
 		if (key == GLFW_KEY_ENTER) {
@@ -150,7 +152,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 		}
 	}
 
-	if ((key == GLFW_KEY_EQUAL) && brushSize < 30) {
+	if ((key == GLFW_KEY_EQUAL) && brushSize < 75) {
 		brushSize++;
 	}
 	else if (key == GLFW_KEY_MINUS && brushSize >= 1) {
@@ -173,6 +175,7 @@ vec2<double> lensDistortio(vec2<double> coord, double intensity) {
 vec2<double> applyLensDistortion(vec2<double> coord) {
 	return lensDistortio(coord, lensDistortion);
 }
+
 
 vec2<double> distortedScreenToGlobal(vec2<double> coord) {
 	return (((coord - (windowSize / 2.0)) * currentSize) + (windowSize / 2.0) + currentPosition) / cellSize_px;
@@ -238,8 +241,7 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) noexcep
 	const float scaleWheelFac = 0.04f;
 
 	desiredSize -= desiredSize * yoffset * scaleWheelFac;
-
-	desiredPosition = (currentPosition - (windowSize / 2.0 * currentSize) + (applyLensDistortion(mousePos) * currentSize)) - (applyLensDistortion(mousePos) * desiredSize) + (windowSize / 2.0 * desiredSize);
+	isZoomChanged = true;
 }
 
 void window_size_callback(GLFWwindow* window, int width, int height) noexcept {
@@ -251,29 +253,91 @@ void window_size_callback(GLFWwindow* window, int width, int height) noexcept {
 	glBindTexture(GL_TEXTURE_2D, 0);*/
 }
 
-static void sendFieldUpdate(GLFWwindow *context_suggestion, bool isBuffer, FieldModification fm) {
-	static constexpr auto sizeOfBatch = sizeof std::remove_pointer<decltype(decltype(fm)::data)>::type();/*
-		to convert from batches to bytes
-	*/
+class GLFieldOutput final : public FieldOutput {
+	class GLBufferedFieldOutput final : public FieldOutput {
+		class InnerFieldOutput final : public FieldOutput {
+		public:
+			InnerFieldOutput() = default;
 
-	bool expected = false;
-	while (!gpuBufferLock_flag.compare_exchange_weak(expected, true)) { expected = false; }
+			virtual void write(FieldModification fm) override {
+				glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+					fm.startIndex_int * sizeOfBatch 
+					, fm.size_int * sizeOfBatch
+					, fm.data);
 
-	if(!glfwGetCurrentContext()) glfwMakeContextCurrent(context_suggestion);
+			}
 
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBufferHandle);
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, fieldBufferHandle);//TODO ?
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 
-		((!isWritingSecondBuffer ^ isBuffer) * field_size_bytes) + fm.startIndex_int * sizeOfBatch
-		, fm.size_int * sizeOfBatch
-		, fm.data);
+			virtual std::unique_ptr<FieldOutput> batched() const override
+			{
+				return std::unique_ptr<InnerFieldOutput>(new InnerFieldOutput());
+			}
 
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+			~InnerFieldOutput() noexcept = default;
+		};
+	private:
+		GLFieldOutput const& parent;
+		std::unique_lock<std::mutex> lock;
 
-	glFinish();
+		static constexpr auto sizeOfBatch = sizeof std::remove_pointer<decltype(FieldModification::data)>::type();/*
+			to convert from batches to bytes
+		*/
+	public:
+		GLBufferedFieldOutput(GLFieldOutput const& parent_) : parent{ parent_ }, lock{ gpuBufferLock } {
+			if (!glfwGetCurrentContext()) glfwMakeContextCurrent(parent.context);
 
-	gpuBufferLock_flag.store(false);
-}
+			GLuint fieldBufferHandle;// { !isBufferSecond ^ parent.isBuffer ? packedGrid1 : packedGrid2 };
+			if (parent.isBuffer) {
+				if (isBufferSecond) fieldBufferHandle = packedGrid2;
+				else fieldBufferHandle = packedGrid1;
+			}
+			else
+				if (isBufferSecond) fieldBufferHandle = packedGrid1;
+				else fieldBufferHandle = packedGrid2;
+
+			glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBufferHandle);
+		}
+
+		GLBufferedFieldOutput(GLBufferedFieldOutput const&) = delete;
+		GLBufferedFieldOutput& operator=(GLBufferedFieldOutput const&) = delete;
+
+		virtual std::unique_ptr<FieldOutput> batched() const override
+		{
+			return std::unique_ptr<InnerFieldOutput>(new InnerFieldOutput());
+		}
+
+		~GLBufferedFieldOutput() noexcept {
+			glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+			glFinish();
+		}
+	};
+private:
+	GLFWwindow* context;
+	bool isBuffer;
+public:
+	GLFieldOutput(bool isBuffer_, GLFWwindow* window_origin) : isBuffer{ isBuffer_ } {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+		auto* context_ = glfwCreateWindow(2, 2, "", NULL, window_origin);
+		if (!context_) {
+			::std::cout << "window for output(current) is null";
+			exit(-1);
+		}
+		context = context_;
+	}
+
+	GLFieldOutput(GLFieldOutput const&) = delete;
+	GLFieldOutput& operator=(GLFieldOutput const&) = delete;
+
+	std::unique_ptr<FieldOutput> batched() const override {
+		return std::unique_ptr<FieldOutput>(new GLBufferedFieldOutput{ *this });
+	}
+
+	~GLFieldOutput() override {
+		glfwDestroyWindow(context);
+	}
+};
+
+
+
 
 void updateState() {
 	curTime = std::chrono::steady_clock::now();
@@ -287,23 +351,38 @@ void updateState() {
 		Timer<> t{};
 		grid->finishGeneration();
 		fieldUpdateWait.add(t.elapsedTime());
-		isWritingSecondBuffer = !isWritingSecondBuffer;
+		isBufferSecond = !isBufferSecond;
 		grid->startNewGeneration();
 	}
 
 	if (paintMode != PaintMode::NONE) {
+		std::vector<Cell> cells{};
+		auto const side = brushSize+1 - -brushSize;
+		auto const size = side * side;
+		cells.reserve(size);
+
 		for (int32_t yo = -brushSize; yo <= brushSize; yo++) {
 			for (int32_t xo = -brushSize; xo <= brushSize; xo++) {
 				const vec2i offset{ xo, yo };
 				const auto coord = cell + offset;
-				if (paintMode == PaintMode::PAINT) {
+
+				cells.push_back(
+					Cell{ 
+						paintMode == PaintMode::PAINT ? FieldCell::ALIVE : FieldCell::DEAD,
+						grid->coordAsIndex(cell + offset)
+					}
+				);
+				/*if (paintMode == PaintMode::PAINT) {
 					grid->setCellAtCoord(cell + offset, FieldCell::ALIVE);
 				}
 				else if (paintMode == PaintMode::DELETE) {
 					grid->setCellAtCoord(coord + offset, FieldCell::DEAD);
-				}
+				}*/
 			}
 		}
+		assert(cells.size() == size);
+
+		grid->setCells(&cells[0], size);
 	}
 
 	const auto screenUpdateElapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - lastScreenUpdateTime).count();
@@ -314,18 +393,39 @@ void updateState() {
 			const vec2<double> dpmouse = applyLensDistortion(pmousePos);
 			const vec2<double> diff = dmouse - dpmouse;
 			desiredPosition -= diff * currentSize;
+			desiredZoomPoint -= diff;
+			desiredDeltaPosChange -= diff;
+		}
+		if (isZoomChanged) {
+			desiredPosition = currentPosition + (applyLensDistortion(mousePos) - windowSize / 2.0) * (currentSize - desiredSize);
+
+			desiredZoomPoint = mousePos;
+			isZoomChanged = false;
 		}
 
-		lastScreenUpdateTime = curTime; //not quite correct
+		lastScreenUpdateTime += std::chrono::nanoseconds(
+			static_cast<long long>(
+				updateCount * screenUpdateTimeMs * 
+				std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds(1)).count()
+				)
+		);
 
 		const auto prevSize = currentSize;
 		const auto prevPos = currentPosition;
+
 		for (uint32_t i = 0; i < updateCount; i++) {
 			currentSize = misc::lerp<double>(currentSize, desiredSize, chasingSpeed); //linear lerp relative to world, not viewport
 			currentPosition = misc::vec2lerp(currentPosition, desiredPosition, chasingSpeed);
+			zoomPoint = misc::vec2lerp(zoomPoint, desiredZoomPoint, chasingSpeed);
 		}
-		deltaSizeChange = misc::lerp<double>(deltaSizeChange, (currentSize - prevSize), chasingSpeed);
-		deltaPosChange = misc::vec2lerp(deltaPosChange, (currentPosition - prevPos), chasingSpeed);
+		desiredDeltaSizeChange += (currentSize - prevSize) / currentSize;
+		//desiredDeltaPosChange += (currentPosition - prevPos);
+		deltaSizeChange = misc::lerp(deltaSizeChange, desiredDeltaSizeChange, chasingSpeed);
+		deltaPosChange = misc::vec2lerp(deltaPosChange, desiredDeltaPosChange, chasingSpeed);
+
+		desiredDeltaSizeChange = misc::lerp(desiredDeltaSizeChange, 0.0, chasingSpeed);
+		desiredDeltaPosChange = misc::vec2lerp(desiredDeltaPosChange, vec2<double>(0.0), chasingSpeed);
+
 		pmousePos = mousePos;
 	}
 }
@@ -365,7 +465,7 @@ int main(void)
 
 	glfwMakeContextCurrent(window);
 
-    //glfwSwapInterval(0);
+    glfwSwapInterval(1);
 
 	GLenum err = glewInit();
 	if (err != GLEW_OK)
@@ -384,52 +484,30 @@ int main(void)
 	glfwSetScrollCallback(window, scroll_callback); 
 	glfwSetWindowSizeCallback(window, window_size_callback);
 
-	GLuint programId = glCreateProgram();
+	GLuint mainProg = glCreateProgram();
 	ShaderLoader sl{};
 	sl.addScreenSizeTriangleStripVertexShader();
 	sl.addShaderFromProjectFilePath("shaders/fs.shader", GL_FRAGMENT_SHADER, "Main shader");
 
-	sl.attachShaders(programId);
+	sl.attachShaders(mainProg);
 
-	glLinkProgram(programId);
-	glValidateProgram(programId);
+	glLinkProgram(mainProg);
+	glValidateProgram(mainProg);
 
 	sl.deleteShaders();
 
-	glUseProgram(programId);
+	glUseProgram(mainProg);
 
 	siv::PerlinNoise noise{};
 	std::srand(75489385988);
 
-	glGenBuffers(1, &fieldBufferHandle);
+	glGenBuffers(1, &packedGrid1);
+	glGenBuffers(1, &packedGrid2);
 	GLenum status;
 	if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
 		fprintf(stderr, "glCheckFramebufferStatus: error %u", status);
 		return -1;
 	}
-
-	class GLFieldOutput final : public FieldOutput {
-	private:
-		GLFWwindow* context;
-		bool isBuffer;
-	public:
-		GLFieldOutput(bool isBuffer_, GLFWwindow *window_origin) : isBuffer{ isBuffer_ } {
-			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-			auto* context_ = glfwCreateWindow(2, 2, "", NULL, window_origin);
-			if (!context_) {
-				::std::cout << "window for output(current) is null";
-				exit(-1);
-			}
-			context = context_;
-		}
-		
-		virtual void write(FieldModification fm) override {
-			sendFieldUpdate(context, isBuffer, fm);
-		}
-		virtual ~GLFieldOutput() override {
-			glfwDestroyWindow(context);
-		}
-	};
 
 	const auto current_outputs = [window]() -> std::unique_ptr<FieldOutput> {
 		return std::unique_ptr<FieldOutput>( new GLFieldOutput{ false, window } );
@@ -447,40 +525,69 @@ int main(void)
 
 	field_size_bytes = grid->size_bytes();
 	
-	for (size_t i = 0; i < gridSize; i++) {
-		const double freq = 0.05;
-		const auto coord = grid->indexAsCoord(i);
-		//const auto a = misc::map<double>(noise.accumulatedOctaveNoise2D_0_1(coord.x * freq, coord.y * freq, 2), 0, 1, -0.4, 0.9);
-		if ((std::rand() / (double)0x7fff) /*+ a*/ > 0.6) grid->setCellAtIndex(i, FieldCell::ALIVE);
+	//{
+	//	AutoTimer<> t{ "set" };
+	//	for (size_t i = 0; i < gridSize; i++) {
+	//		const double freq = 0.05;
+	//		const auto coord = grid->indexAsCoord(i);
+	//		//const auto a = misc::map<double>(noise.accumulatedOctaveNoise2D_0_1(coord.x * freq, coord.y * freq, 2), 0, 1, -0.4, 0.9);
+	//		if ((std::rand() / (double)0x7fff) /*+ a*/ > 0.6) grid->setCellAtIndex(i, FieldCell::ALIVE);
+	//	}
+	//}
+
+	{
+		auto* const rawData = grid->rawData();
+		for (size_t i = 0; i < field_size_bytes / 4; i++) {
+			uint32_t cells{ 0 };
+			for (unsigned j{ 0 }; j < 2; ++j) {
+				cells = (cells << 16) | std::rand() % 32767u;
+				static_assert(32767u == 0x7fff, "");
+			}
+			rawData[i] = cells;
+		}
 	}
 
 	grid->startAllGridTasks();
 
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBufferHandle);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(field_size_bytes * 2, 4), NULL, GL_DYNAMIC_DRAW);
-	glBufferSubData(GL_SHADER_STORAGE_BUFFER, !isWritingSecondBuffer* field_size_bytes, field_size_bytes, grid->rawData());
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, fieldBufferHandle);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, packedGrid1);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(field_size_bytes, 4), NULL, GL_DYNAMIC_DRAW);
+	//glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(field_size_bytes * 2, 4), NULL, GL_DYNAMIC_DRAW);
+	//if(isWritingSecondBuffer) glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, field_size_bytes, grid->rawData());
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, packedGrid1);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, packedGrid2);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(field_size_bytes, 4), NULL, GL_DYNAMIC_DRAW);
+	//if (!isWritingSecondBuffer) glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, field_size_bytes, grid->rawData());
+	//glBufferSubData(GL_SHADER_STORAGE_BUFFER, !isWritingSecondBuffer * field_size_bytes, field_size_bytes, grid->rawData());
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, packedGrid2);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	currrrr->write({ 0, misc::intDivCeil(field_size_bytes, 4), grid->rawData() });
+
 	//uniforms set
-	glUniform1i(glGetUniformLocation(programId, "width"), windowWidth);
-	glUniform1i(glGetUniformLocation(programId, "height"), windowHeight);
+	glUniform1i(glGetUniformLocation(mainProg, "width"), windowWidth);
+	glUniform1i(glGetUniformLocation(mainProg, "height"), windowHeight);
 
-	glUniform1i(glGetUniformLocation(programId, "gridWidth"), gridWidth);
-	glUniform1i(glGetUniformLocation(programId, "gridHeight"), gridHeight);
-	glUniform1ui(glGetUniformLocation(programId, "gridWidth_actual"), grid->width_actual());
+	glUniform1i(glGetUniformLocation(mainProg, "gridWidth"), gridWidth);
+	glUniform1i(glGetUniformLocation(mainProg, "gridHeight"), gridHeight);
+	glUniform1ui(glGetUniformLocation(mainProg, "gridWidth_actual"), grid->width_actual());
 
-	glUniform1f(glGetUniformLocation(programId, "cellSize_px"), cellSize_px);
+	glUniform1f(glGetUniformLocation(mainProg, "cellSize_px"), cellSize_px);
 
-	GLint sizeP = glGetUniformLocation(programId, "size");
-	GLint posP = glGetUniformLocation(programId, "pos");
+	GLint sizeP = glGetUniformLocation(mainProg, "size");
+	GLint posP = glGetUniformLocation(mainProg, "pos");
 
-	GLint mousePosP = glGetUniformLocation(programId, "mousePos");
+	GLint mousePosP = glGetUniformLocation(mainProg, "mousePos");
+	GLint zoomPointP = glGetUniformLocation(mainProg, "zoomPoint");
 
-	glUniform1f(glGetUniformLocation(programId, "lensDistortion"), lensDistortion);
+	glUniform1f(glGetUniformLocation(mainProg, "lensDistortion"), lensDistortion);
 
-	GLint is2ndBufferP = glGetUniformLocation(programId, "is2ndBuffer");
-	glUniform1ui(glGetUniformLocation(programId, "bufferOffset_bytes"), grid->size_bytes());
+	GLint is2ndBufferP = glGetUniformLocation(mainProg, "is2ndBuffer");
+	glUniform1ui(glGetUniformLocation(mainProg, "bufferOffset_bytes"), grid->size_bytes());
+
+	GLint mDeltaScaleChangeP = glGetUniformLocation(mainProg, "deltaScaleChange");
+
 
 	glActiveTexture(GL_TEXTURE0);
 	glGenTextures(1, &frameBufferTexture);
@@ -520,19 +627,16 @@ int main(void)
 	GLint frameBufferP = glGetUniformLocation(postProcessingProg, "frameBuffer");
 	GLint textureSizeP = glGetUniformLocation(postProcessingProg, "textureSize");
 
-	GLint ppDeltaScaleChangeP = glGetUniformLocation(postProcessingProg, "deltaScaleChange");
+	GLint ppDeltaSizeChangeP = glGetUniformLocation(postProcessingProg, "deltaSizeChange");
 	GLint deltaOffsetChangeP = glGetUniformLocation(postProcessingProg, "deltaOffsetChange");
 
-	GLint ppSizeP = glGetUniformLocation(postProcessingProg, "size");
+	glUniform1d(glGetUniformLocation(postProcessingProg, "size"), cellSize_px);
 
 	glUniform1f(glGetUniformLocation(postProcessingProg, "lensDistortion"), lensDistortion);
+	GLint ppZoomPointP = glGetUniformLocation(postProcessingProg, "zoomPoint");
 
-
-	setProgramId(programId);
-	setSSBOHandle(fieldBufferHandle);
-
-	GLint r1P = glGetUniformLocation(programId, "r1");
-	GLint r2P = glGetUniformLocation(programId, "r2");
+	GLint r1P = glGetUniformLocation(mainProg, "r1");
+	GLint r2P = glGetUniformLocation(mainProg, "r2");
 
 	lastGridUpdateTime = lastScreenUpdateTime = curTime = std::chrono::steady_clock::now();
 
@@ -540,7 +644,7 @@ int main(void)
 
 	while (!glfwWindowShouldClose(window))
 	{
-		glUseProgram(programId);
+		glUseProgram(mainProg);
 
 		Timer<> frame{};
 		{
@@ -551,11 +655,14 @@ int main(void)
 			glUniform2d(posP, currentPosition.x, currentPosition.y); 
 
 			glUniform2f(mousePosP, mousePos.x, mousePos.y);
+			glUniform2f(zoomPointP, zoomPoint.x, zoomPoint.y);
 
 			glUniform1f(r1P, r1);
 			glUniform1f(r2P, r2);
 
-			glUniform1ui(is2ndBufferP, !isWritingSecondBuffer);
+			glUniform1ui(is2ndBufferP, !isBufferSecond);
+
+			glUniform1f(mDeltaScaleChangeP, deltaSizeChange);
 
 			glFinish();
 
@@ -569,39 +676,38 @@ int main(void)
 
 		//glClear(GL_COLOR_BUFFER_BIT);
 		{
-			bool expected = false;
-			while (gpuBufferLock_flag.compare_exchange_weak(expected, true)) { expected = false; };
-			Timer<> t{};
+			//std::unique_lock<std::mutex> lock{ gpuBufferLock };
+			{
+				Timer<> t{};
 
-			glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
-			glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			draw.add(t.elapsedTime());
-			gpuBufferLock_flag.store(false);
-		}
+				glBindFramebuffer(GL_FRAMEBUFFER, frameBuffer);
+				glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
+				glBindFramebuffer(GL_FRAMEBUFFER, 0);
+				draw.add(t.elapsedTime());
+			}
 
-		{
-			Timer<> t{};
-			glUseProgram(postProcessingProg);
-			glBindTexture(GL_TEXTURE_2D, frameBufferTexture);
+			{
+				Timer<> t{};
+				glUseProgram(postProcessingProg);
+				glBindTexture(GL_TEXTURE_2D, frameBufferTexture);
 
-			glUniform1i(frameBufferP, 0); 
-			glUniform2f(textureSizeP, windowWidth, windowHeight);
+				glUniform1i(frameBufferP, 0);
+				glUniform2f(textureSizeP, windowWidth, windowHeight);
 
-			glUniform1f(ppDeltaScaleChangeP, deltaSizeChange);
-			glUniform2f(deltaOffsetChangeP, deltaPosChange.x, deltaPosChange.y);
+				glUniform1f(ppDeltaSizeChangeP, deltaSizeChange);
+				glUniform2f(deltaOffsetChangeP, deltaPosChange.x / windowWidth, -deltaPosChange.y / windowHeight);
+				glUniform2f(ppZoomPointP, zoomPoint.x / windowWidth, 1 - zoomPoint.y / windowHeight);
 
-			glUniform1d(ppSizeP, currentSize);
+				glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
+				glBindTexture(GL_TEXTURE_2D, 0);
+				postProcessing.add(t.elapsedTime());
+			}
 
-			glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
-			glBindTexture(GL_TEXTURE_2D, 0);
-			postProcessing.add(t.elapsedTime());
-		}
-
-		{
-			Timer<> t{};
-			glfwSwapBuffers(window);
-			swap.add(t.elapsedTime());
+			{
+				Timer<> t{};
+				glfwSwapBuffers(window);
+				swap.add(t.elapsedTime());
+			}
 		}
 
 		{
@@ -614,10 +720,6 @@ int main(void)
 
 		//std::cout << frame.elapsedTime() << ::std::endl;
 		microsecPerFrame.add(frame.elapsedTime());
-
-		for (uint32_t i = 0; i < 9999999; i++) {
-			//if ((rand() & 0xf000) == 0xf001) std::cout << "impossible!";
-		}
 	}
 
 	glDeleteTextures(1, &frameBufferTexture);

@@ -26,10 +26,9 @@ private:
 	std::mutex startLock;
 	std::condition_variable startWork;
 	std::atomic_bool workStarted{ false }, workEnded{ false };
-	volatile bool continueThread { true };
+	std::atomic_bool continueThread { true };
 
 	std::thread thread;
-	std::chrono::time_point<std::chrono::steady_clock> startTime = std::chrono::steady_clock::now();
 public:
 	template<class... DataArgs>
 	Task(void(*job_)(Data&), DataArgs&&... args) : data(std::forward<DataArgs>(args)...), job(job_), thread{ &Task::task_, this } {}
@@ -53,11 +52,15 @@ private:
 
 template<class Data>
 void Task<Data>::task_() noexcept {
-	bool exit_ = continueThread;
-	while (exit_) {
+	while (true) {
+		bool exit_ = !continueThread;
 		std::unique_lock<std::mutex> lock{ startLock };
 		startWork.wait(lock , [this, &exit_]() { return workStarted.load() == true || (exit_ = !continueThread); });
-		if (exit_) return;
+		if (exit_) { 
+			workStarted.store(false);
+			workEnded.store(true);
+			return; 
+		}
 		job(data);
 		workStarted.store(false);
 		workEnded.store(true);

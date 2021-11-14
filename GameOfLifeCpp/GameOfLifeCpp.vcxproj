@@ -145,14 +145,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="source\data.cpp" />
     <ClCompile Include="source\Grid.cpp" />
     <ClCompile Include="source\Main.cpp" />
     <ClCompile Include="source\Misc.cpp" />
     <ClCompile Include="source\ShaderLoader.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="source\data.h" />
     <ClInclude Include="source\MedianCounter.h" />
     <ClInclude Include="source\PerlinNoise.h" />
     <ClInclude Include="source\AutoTimer.h" />

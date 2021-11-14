@@ -77,8 +77,19 @@ namespace misc {
         return result;
     }
 
+    inline constexpr int32_t roundDownIntTo(int32_t number, int32_t round) {
+        const auto remainder = misc::mod(number, round);
+        const auto result = number - remainder;
+        assert((result % round == 0) || (result <= number));
+        return result;
+    }
+
     inline constexpr uint32_t intDivCeil(uint32_t number, uint32_t round) {
         return roundUpIntTo(number, round) / round;
+    }
+
+    inline constexpr int32_t intDivFloor(int32_t number, int32_t round) {
+        return roundDownIntTo(number, round) / round;
     }
 
     template<class T>
