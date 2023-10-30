@@ -22,7 +22,7 @@ namespace fieldCell {
 	bool isAlive(const FieldCell cell);
 	bool isDead(const FieldCell cell);
 	FieldCell nextGeneration(const FieldCell cell, const uint32_t aliveNegihboursCount);
-	inline constexpr char const* const asString(const FieldCell cell) {
+	inline constexpr char const *asString(const FieldCell cell) {
 		switch (cell) {
 			case FieldCell::DEAD : return "dead" ;
 			case FieldCell::ALIVE: return "alive";

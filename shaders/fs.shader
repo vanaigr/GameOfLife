@@ -63,7 +63,7 @@ layout(origin_upper_left) in vec4 gl_FragCoord;
 out vec4 color;
 
 vec2 distortedScreenToGlobal(const vec2 coord) {
-    const vec2 wh2 = vec2(width, height) / 2.0;
+    const vec2 wh2 = vec2(width, height)*0.5;
     return vec2(((coord - wh2) * size + wh2 + pos) / cellSize_px);
 }
 
@@ -119,7 +119,7 @@ vec3 colorForCoords(const vec2 screenCoords) {
     const vec3 cellPadding = float(isCell) * float(isPadding) * bkgColor;
     vec3 col = cell + bkg + cellPadding;
     col = mix(col, vec3(.5, .5, .5), edgeMask);
-    //col = mix(col, vec3(.5, .5, .5), isPadding);
+    col = mix(col, vec3(.5, .5, .5), float(isPadding));
     return col;
 }
 
@@ -129,8 +129,11 @@ vec3 colorForCoordsChromaticAbberation(const vec2 coord, const float caIntens) {
 }
 
 vec3 col(const vec2 coord) {
-    vec2 distortedCoord = applyLensDistortion(coord, lensDistortion);
-    distortedCoord = applyLensDistortion(distortedCoord - zoomPoint + vec2(width, height) / 2.0, -deltaScaleChange / 3) + zoomPoint - vec2(width, height) / 2.0;
+    const vec2 windowCenter = vec2(width, height)*0.5;
+    const vec2 distortedCoord =  applyLensDistortion(
+        applyLensDistortion(coord, lensDistortion) - zoomPoint + windowCenter,
+        -deltaScaleChange / 3
+    ) + zoomPoint - windowCenter;
 
     return colorForCoords(distortedCoord);
 }
@@ -159,8 +162,5 @@ vec3 sampleN(const vec2 coord, const uint n) {
 
 void main(void) {
     const vec2 coord = gl_FragCoord.xy;
-
     color = vec4(sampleN(coord, 3), 1);
-
-    //color += vec4(0, is2ndBuffer, 0, 0);
 }

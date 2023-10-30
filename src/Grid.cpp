@@ -1,4 +1,4 @@
-#include<GLEW/glew.h>
+#include"glew.h"
 #include<GLFW/glfw3.h>
 
 #include"Misc.h"
@@ -495,7 +495,7 @@ inline static uint32_t newGenerationBatched(
 		 ++i;
 	 }
 
-	 for (const uint32_t j_count = 32; (i + j_count) < endBatch + 1;) {
+	 for (auto const j_count = 32; (i + j_count) < endBatch + 1;) {
 		 for (uint32_t j = 0; j < j_count; ++j, ++i) {
 			 const uint32_t newGen = newGenerationBatched(grid, previousRemainder, i, previousRemainder/*out param*/);
 
@@ -667,7 +667,7 @@ indecesToBrokenCells{ }
 	const double fraction = .05; // fractionOfWorkTimeToSendData
 	static_assert(true, ""/*
 	find amountOfWorkT1. given fraction, workload (total batches)
-	amountOfWorkT1 — percent of work;
+	amountOfWorkT1 - percent of work;
 
 	timeForTask1 = amountOfWorkT1 + amountOfWorkT1 * fraction;
 	timeForTask2 = timeForTask1 + timeForTask1 * fraction;

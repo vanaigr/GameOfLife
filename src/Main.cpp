@@ -1,4 +1,4 @@
-﻿#include <GLEW/glew.h>
+﻿#include "glew.h"
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <chrono>
@@ -202,7 +202,7 @@ void printMouseCellInfo() {
 
 	printf(
 		"mouse is at (%d; %d), index=%d (%d mod 16), cell:%s (%d)" "\n",
-		mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), mouseCell
+		mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), int(mouseCell)
 	);
 
 	for (int i = -1; i <= 1; i++) {
@@ -351,7 +351,8 @@ void updateState() {
 	if (paintMode != PaintMode::NONE) {
 		std::vector<Cell> cells{};
 		auto const side = brushSize+1 - -brushSize;
-		auto const size = side * side;
+        assert(side >= 0);
+		auto const size = size_t(side * side);
 		cells.reserve(size);
 
 		for (int32_t yo = -brushSize; yo <= brushSize; yo++) {
@@ -437,12 +438,10 @@ struct BufferData {
 	}
 };
 
-int main(void)
-{
+int main() {
 	GLFWwindow* window;
 
-	if (!glfwInit())
-		return -1;
+	if(!glfwInit()) return -1;
 
 //#define FULLSCREEN
 #ifdef FULLSCREEN
@@ -451,10 +450,9 @@ int main(void)
 	window = glfwCreateWindow(800, 800, "Game ofLife", NULL, NULL);
 #endif
 
-	if (!window)
-	{
+	if(!window) {
 		glfwTerminate();
-		return -1;
+		return 1;
 	}
 
     int width, height;
@@ -466,14 +464,11 @@ int main(void)
     glfwSwapInterval(1);
 
 	GLenum err = glewInit();
-	if (err != GLEW_OK)
-	{
-		fprintf(stderr, "Error: %s\n", glewGetErrorString(err));
+	if(err != GLEW_OK) {
+        std::cerr << "Error:\n" << glewGetErrorString(err) << '\n';
 		glfwTerminate();
-		return -1;
+		return 2;
 	}
-
-	fprintf(stdout, "Status: Using GLEW %s\n", glewGetString(GLEW_VERSION));
 
 	//callbacks
 	glfwSetKeyCallback(window, key_callback);
@@ -501,16 +496,18 @@ int main(void)
 
 	glGenBuffers(1, &packedGrid1);
 	glGenBuffers(1, &packedGrid2);
-	GLenum status;
-	if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
-		fprintf(stderr, "glCheckFramebufferStatus: error %u", status);
-		return -1;
+	
+	if(GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        status != GL_FRAMEBUFFER_COMPLETE
+    ) {
+        std::cerr << "framebuffer error: " << status << '\n';
+		return 2;
 	}
 
-	const auto current_outputs = [window]() -> std::unique_ptr<FieldOutput> {
+	auto const current_outputs = [window]() -> std::unique_ptr<FieldOutput> {
 		return std::unique_ptr<FieldOutput>( new GLFieldOutput{ false, window } );
 	};
-	const auto buffer_outputs = [window]() -> std::unique_ptr<FieldOutput> {
+	auto const buffer_outputs = [window]() -> std::unique_ptr<FieldOutput> {
 		return std::unique_ptr<FieldOutput>(new GLFieldOutput{ true, window });
 	};
 
