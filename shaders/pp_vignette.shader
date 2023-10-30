@@ -28,7 +28,7 @@ float distanceToEdges_px(float coord, float size) {
 }
 
 /*float squareVignette(vec2 coord, float startDistance, float endDistance, float startGrad, float endGrad, float intensity) {
-    float w2 = width / 2f, h2 = height / 2f;
+    float w2 = width / 2.0, h2 = height / 2.0;
     float whMin2 = min(width, height) / 2.0;
     float start = whMin2 * (1 - startDistance);
     float end = whMin2 * (1 - endDistance);
@@ -49,7 +49,7 @@ float distanceToEdges_px(float coord, float size) {
 
 float squareVignette(vec2 coord, float radius, float padding, float startGrad, float endGrad) {
     float width = textureSize.x, height = textureSize.y;
-    float w2 = width / 2f, h2 = height / 2f;
+    float w2 = width / 2.0, h2 = height / 2.0;
     float whMin2 = min(width, height) / 2.0;
     float x = coord.x, y = coord.y;
 
