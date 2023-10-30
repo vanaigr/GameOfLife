@@ -39,22 +39,14 @@ UMedianCounter
 
 UMedianCounter microsecPerFrame{ counterSampleSize };
 
-//#define FULLSCREEN
+static vec2<double> windowSize;
+static double cellSize_px;
 
-#ifdef FULLSCREEN
-const uint32_t windowWidth = 1920, windowHeight = 1080;
-#else
-const uint32_t windowWidth = 800, windowHeight = 800;
-#endif // FULLSCREEN
-
-const vec2<double> windowSize{ windowWidth, windowHeight };
 
 const uint32_t gridWidth = 32, gridHeight = 32;
 const uint32_t gridSize = gridWidth * gridHeight;
 const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
-
-const double cellSize_px = std::min((float)windowHeight / (float)gridHeight, (float)windowWidth / (float)gridWidth); //cell size in pixels
 
 bool gridUpdate = true;
 
@@ -162,10 +154,11 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 
 vec2<double> lensDistortio(vec2<double> coord, double intensity) {
 	auto x = coord.x, y = coord.y;
-	auto w2 = windowWidth / 2.0, h2 = windowHeight / 2.0;
+    auto const w2 = windowSize.x * 0.5;
+    auto const h2 = windowSize.y * 0.5;
 	auto xc = x - w2, yc = y - h2;
 	auto dist = sqrt(xc * xc + yc * yc);
-	auto maxDist = sqrt(windowWidth * float(windowWidth) + windowHeight * float(windowHeight)) / 2.;
+	auto maxDist = sqrt(windowSize.dot(windowSize)) * 0.5;
 	auto distortion = dist / maxDist;
 	auto newX = x - distortion * intensity * (xc);
 	auto newY = y - distortion * intensity * (yc);
@@ -220,7 +213,7 @@ void printMouseCellInfo() {
 }
 
 static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey) noexcept {
-	r2 = mousex / windowWidth;
+	r2 = mousex / windowSize.x;
 	mousePos = vec2<double>(mousex, mousey);
 }
 
@@ -451,11 +444,12 @@ int main(void)
 	if (!glfwInit())
 		return -1;
 
+//#define FULLSCREEN
 #ifdef FULLSCREEN
-	window = glfwCreateWindow(windowWidth, windowHeight, "Game ofLife", glfwGetPrimaryMonitor(), NULL);
+	window = glfwCreateWindow(1920, 1080, "Game ofLife", glfwGetPrimaryMonitor(), NULL);
 #else
-	window = glfwCreateWindow(windowWidth, windowHeight, "Game ofLife", NULL, NULL);
-#endif // !FULLSCREEN
+	window = glfwCreateWindow(800, 800, "Game ofLife", NULL, NULL);
+#endif
 
 	if (!window)
 	{
@@ -463,8 +457,12 @@ int main(void)
 		return -1;
 	}
 
-	glfwMakeContextCurrent(window);
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+    windowSize = { double(width), double(height) };
+    cellSize_px = std::min(windowSize.x / gridHeight, windowSize.y / gridWidth);
 
+	glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
 	GLenum err = glewInit();
@@ -566,8 +564,8 @@ int main(void)
 	currrrr->write({ 0, misc::intDivCeil(field_size_bytes, 4), grid->rawData() });
 
 	//uniforms set
-	glUniform1i(glGetUniformLocation(mainProg, "width"), windowWidth);
-	glUniform1i(glGetUniformLocation(mainProg, "height"), windowHeight);
+	glUniform1i(glGetUniformLocation(mainProg, "width"), (int) windowSize.x);
+	glUniform1i(glGetUniformLocation(mainProg, "height"), (int) windowSize.y);
 
 	glUniform1i(glGetUniformLocation(mainProg, "gridWidth"), gridWidth);
 	glUniform1i(glGetUniformLocation(mainProg, "gridHeight"), gridHeight);
@@ -596,7 +594,7 @@ int main(void)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, windowWidth, windowHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, int(windowSize.x), int(windowSize.y), 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 	glBindTexture(GL_TEXTURE_2D, 0);
 
 	glGenFramebuffers(1, &frameBuffer);
@@ -692,11 +690,11 @@ int main(void)
 				glBindTexture(GL_TEXTURE_2D, frameBufferTexture);
 
 				glUniform1i(frameBufferP, 0);
-				glUniform2f(textureSizeP, windowWidth, windowHeight);
+				glUniform2f(textureSizeP, windowSize.x, windowSize.y);
 
 				glUniform1f(ppDeltaSizeChangeP, deltaSizeChange);
-				glUniform2f(deltaOffsetChangeP, deltaPosChange.x / windowWidth, -deltaPosChange.y / windowHeight);
-				glUniform2f(ppZoomPointP, zoomPoint.x / windowWidth, 1 - zoomPoint.y / windowHeight);
+				glUniform2f(deltaOffsetChangeP, deltaPosChange.x / windowSize.x, -deltaPosChange.y / windowSize.y);
+				glUniform2f(ppZoomPointP, zoomPoint.x / windowSize.x, 1 - zoomPoint.y / windowSize.y);
 
 				glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);
 				glBindTexture(GL_TEXTURE_2D, 0);

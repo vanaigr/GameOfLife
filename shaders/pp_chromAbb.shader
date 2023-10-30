@@ -8,7 +8,7 @@ precision mediump int;
 uniform sampler2D frameBuffer;
 uniform vec2 textureSize;
 
-in vec4 gl_FragCoord;
+layout(origin_upper_left) in vec4 gl_FragCoord;
 out vec4 color;
 
 uniform float deltaSizeChange;
@@ -20,7 +20,7 @@ uniform float lensDistortion;
 uniform vec2 zoomPoint;
 
 vec3 colorForCoords(const vec2 coord) {
-    return vec3(texture2D(frameBuffer, coord).xyz);
+    return vec3(texture2D(frameBuffer, vec2(coord.x, 1 - coord.y)).xyz);
 }
 
 vec2 applyLensDistortion(const vec2 coord, const float intensity) {
