@@ -68,15 +68,18 @@ private:
 	std::atomic_bool interrupt_flag;
 	std::vector<uint32_t> indecesToBrokenCells;
 public:
-	Field(const uint32_t gridWidth, const uint32_t gridHeight, 
-		const size_t numberOfTasks_, std::function<std::unique_ptr<FieldOutput>()> current_outputs, std::function<std::unique_ptr<FieldOutput>()> buffer_outputs, bool deployTasks
+	Field(
+        const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, 
+        std::function<std::unique_ptr<FieldOutput>()> current_outputs, 
+        std::function<std::unique_ptr<FieldOutput>()> buffer_outputs
 	);
 	~Field();
 
 	Field(Field const&) = delete;
 	Field& operator=(Field const&) = delete;
 public:
-	void finishGeneration();
+	bool tryFinishGeneration();
+	void startCurGeneration();
 	void startNewGeneration();
 
 	void fill(const FieldCell cell);
@@ -106,9 +109,6 @@ public:
 	uint32_t size_actual() const;
 	uint32_t width_actual() const;
 	uint32_t *rawData() const;
-
-	void stopAllGridTasks();
-	void startAllGridTasks();
 private:
 	void waitForGridTasks();
 	void deployGridTasks();

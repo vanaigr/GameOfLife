@@ -95,12 +95,14 @@ public:
 		std::memcpy(
 			&grid[startPadding_int - width_int],
 			&(grid[startPadding_int + size_int - width_int]),
-			width_int * sizeOfUint32); //start pading
+			width_int * sizeOfUint32
+		); //start padding
 
 		std::memcpy(
 			&grid[startPadding_int + size_int],
 			&(grid[startPadding_int]),
-			width_int * sizeOfUint32); //end pading
+			width_int * sizeOfUint32
+		); //end padding
 
 		if (edgeCellsOptimization) {
 			const int32_t firstEmptyCellInColIndex_int = width_grid / batchSize;
@@ -150,12 +152,9 @@ public:
 		}
 	}
 
-
-	void prepareNext() {
-		fixField<buffer>();
-
-		current_.swap(buffer_);
-	}
+    void swapBuffers() {
+        current_.swap(buffer_);
+    }
 
 	template<typename gridType = current>
 	void fill(FieldCell const cell) {
@@ -648,17 +647,19 @@ uint32_t* Field::rawData() const {
 }
 
 
-Field::Field(const uint32_t gridWidth, const uint32_t gridHeight,
-	const size_t numberOfTasks_, std::function<std::unique_ptr<FieldOutput>()> current_outputs, std::function<std::unique_ptr<FieldOutput>()> buffer_outputs, bool deployTasks
+Field::Field(
+    const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_,
+    std::function<std::unique_ptr<FieldOutput>()> current_outputs, 
+    std::function<std::unique_ptr<FieldOutput>()> buffer_outputs
 ) :
-gridPimpl{ new FieldPimpl(gridWidth, gridHeight) },
-isStopped{ deployTasks == false },
-current_output{ current_outputs() },
-buffer_output{ buffer_outputs() },
-numberOfTasks(numberOfTasks_),
-gridTasks{ new std::unique_ptr<Task<GridData>>[numberOfTasks_] },
-interrupt_flag{ false },
-indecesToBrokenCells{ }
+    gridPimpl{ new FieldPimpl(gridWidth, gridHeight) },
+    isStopped{ false },
+    current_output{ current_outputs() },
+    buffer_output{ buffer_outputs() },
+    numberOfTasks(numberOfTasks_),
+    gridTasks{ new std::unique_ptr<Task<GridData>>[numberOfTasks_] },
+    interrupt_flag{ false },
+    indecesToBrokenCells{ }
 {
 	assert(numberOfTasks >= 1);
 
@@ -732,8 +733,6 @@ indecesToBrokenCells{ }
 		batchesBefore += numberOfBatches;
 		remainingBatches -= numberOfBatches;
 	}
-
-	deployGridTasks();
 }
 
 
@@ -819,8 +818,10 @@ static FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::F
 	return fieldCell::nextGeneration(cell ? FieldCell::ALIVE : FieldCell::DEAD, aliveNeighbours);
 }
 
-void Field::finishGeneration() {
-	waitForGridTasks();
+bool Field::tryFinishGeneration() {
+    if(!isStopped) for(uint32_t i = 0; i < numberOfTasks; i++) {
+		if(!gridTasks.get()[i]->resultReady()) return false;
+	}
 	interrupt_flag.store(false);
 
 	if (indecesToBrokenCells.size() > 0) {
@@ -906,12 +907,13 @@ void Field::finishGeneration() {
 		}
 		indecesToBrokenCells.clear();
 	}
+
+    return true;
 }
 
 void Field::startNewGeneration() {
-	gridPimpl->prepareNext();
-
-	deployGridTasks();
+    gridPimpl->swapBuffers();
+    startCurGeneration();
 }
 
 void Field::waitForGridTasks() {
@@ -921,26 +923,19 @@ void Field::waitForGridTasks() {
 	}
 }
 void Field::deployGridTasks() {
-	if (isStopped) return;
-	for (uint32_t i = 0; i < numberOfTasks; i++) {
+    if(isStopped) {
+        std::cerr << "trying to start task when `isStopped` is set\n";
+        return;
+    }
+	for(uint32_t i = 0; i < numberOfTasks; i++) {
 		gridTasks.get()[i]->start();
 	}
 }
 
-void Field::stopAllGridTasks() {
-	interrupt_flag.store(true);
-	for (uint32_t i = 0; i < numberOfTasks; i++) {
-		gridTasks.get()[i]->waitForResult();
-	}
-	isStopped = true;
-}
-
-void Field::startAllGridTasks() {
-	isStopped = false;
-	interrupt_flag.store(false);
-	for (uint32_t i = 0; i < numberOfTasks; i++) {
-		gridTasks.get()[i]->start();
-	}
+void Field::startCurGeneration() {
+	gridPimpl->fixField<Field::FieldPimpl::current>();
+    isStopped = false;
+	deployGridTasks();
 }
 
 uint32_t Field::width() const {

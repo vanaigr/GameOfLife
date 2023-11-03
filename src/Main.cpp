@@ -67,7 +67,7 @@ const uint32_t gridSize = gridWidth * gridHeight;
 const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
 
-bool gridUpdate = true;
+static bool gridUpdate = true;
 
 float lensDistortion = 0.17;
 
@@ -353,14 +353,17 @@ void updateState() {
 	vec2i cell = globalAsCell(global);
 
 	const auto gridUpdateElapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - lastGridUpdateTime).count();
-	if (gridUpdate && (gridUpdateElapsedTime >= 1000.0 / gridUpdatesPerSecond)) {
-		lastGridUpdateTime = curTime;
-		Timer<> t{};
-		grid->finishGeneration();
-		fieldUpdateWait.add(t.elapsedTime());
-		isBufferSecond = !isBufferSecond;
-		grid->startNewGeneration();
-	}
+	if(
+        gridUpdate
+        && (gridUpdateElapsedTime >= 1000.0 / gridUpdatesPerSecond)
+        && grid->tryFinishGeneration()
+      ) {
+        lastGridUpdateTime = curTime;
+        Timer<> t{};
+        fieldUpdateWait.add(t.elapsedTime());
+        isBufferSecond = !isBufferSecond;
+        grid->startNewGeneration();
+    }
 
 	if (paintMode != PaintMode::NONE) {
 		std::vector<Cell> cells{};
@@ -542,9 +545,10 @@ int main() {
 	const auto currrrr = current_outputs();
 	const auto bufffff = buffer_outputs();
 
-	grid = std::unique_ptr<Field>{ 
-		new Field(gridWidth, gridHeight, numberOfTasks, current_outputs, buffer_outputs, false)
-	};
+	grid = std::unique_ptr<Field>{ new Field(
+        gridWidth, gridHeight, numberOfTasks, 
+        current_outputs, buffer_outputs
+    ) };     
 
 	field_size_bytes = grid->size_bytes();
 	
@@ -570,7 +574,8 @@ int main() {
 		}
 	}
 
-	grid->startAllGridTasks();
+    gridUpdate = false;
+    grid->startCurGeneration();
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, packedGrid1);
 	glBufferData(GL_SHADER_STORAGE_BUFFER, misc::roundUpIntTo(field_size_bytes, 4), NULL, GL_DYNAMIC_DRAW);

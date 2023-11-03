@@ -46,6 +46,9 @@ public:
 public:
 	void start() noexcept;
 	void waitForResult() noexcept;
+    bool resultReady() noexcept {
+        return !workStarted.load() || workEnded.load();
+    }
 private:
 	void task_() noexcept;
 };
@@ -77,6 +80,5 @@ void Task<Data>::start() noexcept {
 
 template<class Data>
 void Task<Data>::waitForResult() noexcept {
-	while (workEnded.load() == false) {}
-
+	while (workEnded.load() == false) {} //TODO: make it less resource intensive
 }
