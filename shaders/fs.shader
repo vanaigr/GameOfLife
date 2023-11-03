@@ -1,21 +1,11 @@
 #version 430
 
-#ifdef GL_ES
-precision mediump float;
-precision mediump int;
-#endif
-
-uniform double size;
-uniform dvec2 pos;
-
-uniform float cellSize_px;
-
-
 uniform float deltaScaleChange;
 //uniform vec2 deltaOffsetChange;
 
-uniform int width;
-uniform int height;
+uniform vec2 vpPos;
+uniform float vpSize;
+uniform ivec2 winSize;
 
 uniform float lensDistortion;
 
@@ -23,14 +13,7 @@ uniform int gridWidth;
 uniform int gridHeight;
 uniform uint gridWidth_actual;
 
-uniform float r1;
-uniform float r2;
-
 uniform vec2 mousePos, zoomPoint;
-
-vec2 windowSize() {
-    return vec2(width, height);
-}
 
 uniform uint is2ndBuffer;
 uniform uint bufferOffset_bytes;
@@ -63,28 +46,23 @@ layout(origin_upper_left) in vec4 gl_FragCoord;
 out vec4 color;
 
 vec2 distortedScreenToGlobal(const vec2 coord) {
-    const vec2 wh2 = vec2(width, height)*0.5;
-    return vec2(((coord - wh2) * size + wh2 + pos) / cellSize_px);
+    return (coord / winSize.y - 0.5) * vpSize + vpPos;
 }
 
 ivec2 globalAsCell(const vec2 coord) {
-    const float cx = coord.x;
-    const float cy = coord.y;
-    const int cellX = int(mod(cx, gridWidth));
-    const int cellY = int(mod(cy, gridHeight));
-    return ivec2(cellX, cellY);
+    return ivec2(
+        int(mod(coord.x, gridWidth )), 
+        int(mod(coord.y, gridHeight))
+    );
 }
 
-vec2 applyLensDistortion(const vec2 coord, const float intensity) {
-    const float x = coord.x, y = coord.y;
-    const float w2 = width / 2.0, h2 = height / 2.0;
-    const float xc = x - w2, yc = y - h2;
-    const float dist_sq = (xc * xc + yc * yc);
-    const float maxDist_sq = (w2 * w2 + h2 * h2);
-    const float distortion = sqrt(dist_sq / maxDist_sq);
-    const float newX = x - distortion * intensity * xc;
-    const float newY = y - distortion * intensity * yc;
-    return vec2(newX, newY);
+vec2 applyLensDistortion(const vec2 screenCoord, const float intensity) {
+    const vec2 size2 = vec2(winSize) * 0.5;
+    const vec2 centerCoord = screenCoord - size2;
+    const float size = dot(centerCoord, centerCoord);
+    const float maxSize = dot(size2, size2);
+    const float coeff = sqrt(size / maxSize);
+    return screenCoord - centerCoord * coeff * intensity;
 }
 
 const vec3 wallColor = vec3(30.0 / 255.0, 240.0 / 255.0, 20.0 / 255.0);
@@ -123,13 +101,8 @@ vec3 colorForCoords(const vec2 screenCoords) {
     return col;
 }
 
-vec3 colorForCoordsChromaticAbberation(const vec2 coord, const float caIntens) {
-    const vec2 newCoord = applyLensDistortion(coord, caIntens);
-    return colorForCoords(newCoord);
-}
-
 vec3 col(const vec2 coord) {
-    const vec2 windowCenter = vec2(width, height)*0.5;
+    const vec2 windowCenter = vec2(winSize) * 0.5;
     const vec2 distortedCoord =  applyLensDistortion(
         applyLensDistortion(coord, lensDistortion) - zoomPoint + windowCenter,
         -deltaScaleChange / 3

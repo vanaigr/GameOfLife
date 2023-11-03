@@ -1,5 +1,6 @@
 ﻿#include "glew.h"
 #include <GLFW/glfw3.h>
+#include <cmath>
 #include <iostream>
 #include <chrono>
 #include <algorithm>
@@ -39,11 +40,29 @@ UMedianCounter
 
 UMedianCounter microsecPerFrame{ counterSampleSize };
 
-static vec2<double> windowSize;
-static double cellSize_px;
+struct WindowSize {
+    vec2i windowSize;
+    vec2d windowSizeD;
+    vec2d winSizeH;
+    double normalizeCoeff;
+    double lensDistortionCoeff;
+};
+static WindowSize winSize;
 
+struct Space {
+    vec2d vpPosDesired, vpPos; //center of the viewport's position in global space
+    double vpSize; //total vertical size of viewport in global space
+};
+static Space space;
 
-const uint32_t gridWidth = 32, gridHeight = 32;
+static double zoomLevel;
+static vec2d dVpPosDesired, dVpPos;
+static double dVpSizeDesired, dVpSize;
+
+vec2d desiredZoomPoint, zoomPoint; //TODO: init
+bool isZoomChanged;
+
+const uint32_t gridWidth = 62, gridHeight = 30;
 const uint32_t gridSize = gridWidth * gridHeight;
 const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
@@ -63,7 +82,7 @@ enum class PaintMode : unsigned char {
 PaintMode paintMode = PaintMode::NONE;
 
 
-vec2<double> mousePos(0, 0), pmousePos(0, 0);
+vec2d mousePos(0), pmousePos(0, 0);
 
 std::chrono::steady_clock::time_point lastGridUpdateTime;
 uint32_t gridUpdatesPerSecond = 5;
@@ -80,15 +99,7 @@ std::chrono::steady_clock::time_point lastScreenUpdateTime;
 const uint32_t screenUpdatesPerSecond = 40;
 const double screenUpdateTimeMs = 1000.0 / screenUpdatesPerSecond;
 
-const double chasingSpeed = .4;
-
-double desiredDeltaSizeChange = 0, deltaSizeChange = 0;
-double desiredSize = 0.2, currentSize = desiredSize;
-vec2<double> desiredDeltaPosChange{ 0, 0 }, deltaPosChange(0, 0);
-bool isZoomChanged { false };
-
-vec2<double> desiredPosition{ }, currentPosition{ desiredPosition };
-vec2<double> desiredZoomPoint{ mousePos }, zoomPoint{ desiredZoomPoint };
+const double chasingSpeed = 0.4; //.4;
 
 static GLuint packedGrid1 = 0, packedGrid2 = 0;
 static size_t field_size_bytes;
@@ -152,47 +163,50 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 	}
 }
 
-vec2<double> lensDistortio(vec2<double> coord, double intensity) {
-	auto x = coord.x, y = coord.y;
-    auto const w2 = windowSize.x * 0.5;
-    auto const h2 = windowSize.y * 0.5;
-	auto xc = x - w2, yc = y - h2;
-	auto dist = sqrt(xc * xc + yc * yc);
-	auto maxDist = sqrt(windowSize.dot(windowSize)) * 0.5;
-	auto distortion = dist / maxDist;
-	auto newX = x - distortion * intensity * (xc);
-	auto newY = y - distortion * intensity * (yc);
-	return vec2<double>(newX, newY);
+
+static void updateWinSize(int const width, int const height) {
+    auto const winSizeD = vec2d{ double(width), double(height) };
+
+    auto w = WindowSize{};
+    w.windowSize = vec2i{ width, height };
+    w.windowSizeD = winSizeD;
+    w.winSizeH = winSizeD * 0.5;
+    w.normalizeCoeff = 1.0 / winSizeD.y;
+    w.lensDistortionCoeff = 1.0/w.winSizeH.length() * lensDistortion; 
+
+    winSize = w;
 }
 
-vec2<double> applyLensDistortion(vec2<double> coord) {
-	return lensDistortio(coord, lensDistortion);
+static double getVpSizeDesired() {
+    return std::pow(2, zoomLevel);
+}
+static double vpSizeToZoomLevel(double const size) {
+    return std::log2(size);
+}
+
+static void updateSpace() {
+    auto const size = std::min(gridWidth, gridHeight);
+    auto const pos = vec2d{ gridWidth * 0.5, gridHeight * 0.5 };
+    zoomLevel = vpSizeToZoomLevel(size);
+    space = Space{ pos, pos, size };
 }
 
 
-vec2<double> distortedScreenToGlobal(vec2<double> coord) {
-	return (((coord - (windowSize / 2.0)) * currentSize) + (windowSize / 2.0) + currentPosition) / cellSize_px;
+static vec2d applyLensDistortion(vec2d const screenCoord) {
+    auto const centerCoord = screenCoord - winSize.winSizeH;
+    return screenCoord - centerCoord * centerCoord.length() * winSize.lensDistortionCoeff;
 }
 
-
-vec2<double> screenToGlobal(vec2<double> coord) {
-	return distortedScreenToGlobal(applyLensDistortion(coord));
+static vec2d mouseToGlobal() {
+    return (applyLensDistortion(mousePos) * winSize.normalizeCoeff - 0.5)
+        * space.vpSize + space.vpPos;
 }
 
-vec2<double> mouseToGlobal() {
-	return screenToGlobal(mousePos);
-}
-
-vec2<double> globalToScreen(vec2<double> coord) {
-	return ((coord * cellSize_px) - currentPosition - (windowSize / 2.0)) / currentSize + (windowSize / 2.0);
-}
-
-vec2i globalAsCell(vec2<double> coord) {
-	float cx = coord.x;
-	float cy = coord.y;
-	int cellX = int(misc::modf(cx, gridWidth));
-	int cellY = int(misc::modf(cy, gridHeight));
-	return vec2i{ cellX, cellY };
+vec2i globalAsCell(vec2d coord) {
+	return vec2{ 
+        int(misc::modf(coord.x, gridWidth)), 
+        int(misc::modf(coord.y, gridHeight)) 
+    };
 }
 
 void printMouseCellInfo() {
@@ -213,8 +227,8 @@ void printMouseCellInfo() {
 }
 
 static void cursor_position_callback(GLFWwindow* window, double mousex, double mousey) noexcept {
-	r2 = mousex / windowSize.x;
-	mousePos = vec2<double>(mousex, mousey);
+	r2 = mousex / winSize.windowSize.x;
+	mousePos = vec2d(mousex, mousey);
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) noexcept {
@@ -231,9 +245,9 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) noexcept {
-	const float scaleWheelFac = 0.04f;
+	const float scaleWheelFac = 0.1f;
 
-	desiredSize -= desiredSize * yoffset * scaleWheelFac;
+    zoomLevel -= yoffset * scaleWheelFac;
 	isZoomChanged = true;
 }
 
@@ -335,7 +349,7 @@ public:
 void updateState() {
 	curTime = std::chrono::steady_clock::now();
 
-	vec2<double> global = mouseToGlobal();
+	vec2d global = mouseToGlobal();
 	vec2i cell = globalAsCell(global);
 
 	const auto gridUpdateElapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - lastGridUpdateTime).count();
@@ -379,49 +393,47 @@ void updateState() {
 		grid->setCells(&cells[0], size);
 	}
 
+    auto const vpSizeDesired = getVpSizeDesired(); 
+
 	const auto screenUpdateElapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - lastScreenUpdateTime).count();
-	const uint32_t updateCount = (screenUpdateElapsedTime / screenUpdateTimeMs);
-	if (updateCount > 0) {
-		if (pan) {
-			const vec2<double>  dmouse = applyLensDistortion(mousePos);
-			const vec2<double> dpmouse = applyLensDistortion(pmousePos);
-			const vec2<double> diff = dmouse - dpmouse;
-			desiredPosition -= diff * currentSize;
-			desiredZoomPoint -= diff;
-			desiredDeltaPosChange -= diff;
-		}
-		if (isZoomChanged) {
-			desiredPosition = currentPosition + (applyLensDistortion(mousePos) - windowSize / 2.0) * (currentSize - desiredSize);
+    lastScreenUpdateTime = curTime;
+    if (pan) {
+        const vec2d  dmouse = applyLensDistortion(mousePos);
+        const vec2d dpmouse = applyLensDistortion(pmousePos);
+        auto const diff = (dmouse - dpmouse) * winSize.normalizeCoeff;
+        space.vpPosDesired -= diff * space.vpSize;
+        desiredZoomPoint -= (dmouse - dpmouse);
+        dVpPosDesired -= (dmouse - dpmouse);
+    }
+    if (isZoomChanged) {
+        auto const pivot = mouseToGlobal();
+        space.vpPosDesired = pivot + (space.vpPos - pivot) / space.vpSize * vpSizeDesired;
 
-			desiredZoomPoint = mousePos;
-			isZoomChanged = false;
-		}
+        desiredZoomPoint = mousePos;
+        isZoomChanged = false;
+    }
 
-		lastScreenUpdateTime += std::chrono::nanoseconds(
-			static_cast<long long>(
-				updateCount * screenUpdateTimeMs * 
-				std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds(1)).count()
-				)
-		);
+    auto const coeff = 1 - std::pow(
+        1 - chasingSpeed,
+        screenUpdateElapsedTime / screenUpdateTimeMs
+    );
 
-		const auto prevSize = currentSize;
-		const auto prevPos = currentPosition;
+    const auto prevSize = space.vpSize;
+    const auto prevPos = space.vpPos;
 
-		for (uint32_t i = 0; i < updateCount; i++) {
-			currentSize = misc::lerp<double>(currentSize, desiredSize, chasingSpeed); //linear lerp relative to world, not viewport
-			currentPosition = misc::vec2lerp(currentPosition, desiredPosition, chasingSpeed);
-			zoomPoint = misc::vec2lerp(zoomPoint, desiredZoomPoint, chasingSpeed);
-		}
-		desiredDeltaSizeChange += (currentSize - prevSize) / currentSize;
-		//desiredDeltaPosChange += (currentPosition - prevPos);
-		deltaSizeChange = misc::lerp(deltaSizeChange, desiredDeltaSizeChange, chasingSpeed);
-		deltaPosChange = misc::vec2lerp(deltaPosChange, desiredDeltaPosChange, chasingSpeed);
+    space.vpSize = misc::lerp(space.vpSize, vpSizeDesired, coeff);
+    space.vpPos = misc::vec2lerp(space.vpPos, space.vpPosDesired, coeff);
+    zoomPoint = misc::vec2lerp(zoomPoint, desiredZoomPoint, coeff);
 
-		desiredDeltaSizeChange = misc::lerp(desiredDeltaSizeChange, 0.0, chasingSpeed);
-		desiredDeltaPosChange = misc::vec2lerp(desiredDeltaPosChange, vec2<double>(0.0), chasingSpeed);
+    dVpSizeDesired += (space.vpSize - prevSize) / space.vpSize;
 
-		pmousePos = mousePos;
-	}
+    dVpSize = misc::lerp(dVpSize, dVpSizeDesired, coeff);
+    dVpPos = misc::vec2lerp(dVpPos, dVpPosDesired, coeff);
+
+    dVpSizeDesired = misc::lerp(dVpSizeDesired, 0.0, coeff);
+    dVpPosDesired = misc::vec2lerp(dVpPosDesired, vec2d(0.0), coeff);
+
+    pmousePos = mousePos;
 }
 
 //delete + delete function declaration at the start of the file
@@ -438,10 +450,17 @@ struct BufferData {
 	}
 };
 
-int main() {
-	GLFWwindow* window;
+void APIENTRY glDebugOutput(GLenum source, GLenum type, unsigned int id, GLenum severity, 
+							GLsizei length, const char *message, const void *userParam) {
+	if(id == 131169 || id == 131185 || id == 131218 || id == 131204) return; 
+	std::cout << message << '\n';
+}
 
+int main() {
 	if(!glfwInit()) return -1;
+
+	GLFWwindow* window;
+    glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
 
 //#define FULLSCREEN
 #ifdef FULLSCREEN
@@ -457,8 +476,8 @@ int main() {
 
     int width, height;
     glfwGetWindowSize(window, &width, &height);
-    windowSize = { double(width), double(height) };
-    cellSize_px = std::min(windowSize.x / gridHeight, windowSize.y / gridWidth);
+    updateWinSize(width, height);
+    updateSpace();
 
 	glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
@@ -468,6 +487,15 @@ int main() {
         std::cerr << "Error:\n" << glewGetErrorString(err) << '\n';
 		glfwTerminate();
 		return 2;
+	}
+
+    int flags; 
+	glGetIntegerv(GL_CONTEXT_FLAGS, &flags);
+	if (flags & GL_CONTEXT_FLAG_DEBUG_BIT) {
+		glEnable(GL_DEBUG_OUTPUT);
+		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS); 
+		glDebugMessageCallback(glDebugOutput, nullptr);
+		glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
 	}
 
 	//callbacks
@@ -561,17 +589,14 @@ int main() {
 	currrrr->write({ 0, misc::intDivCeil(field_size_bytes, 4), grid->rawData() });
 
 	//uniforms set
-	glUniform1i(glGetUniformLocation(mainProg, "width"), (int) windowSize.x);
-	glUniform1i(glGetUniformLocation(mainProg, "height"), (int) windowSize.y);
+	glUniform2i(glGetUniformLocation(mainProg, "winSize"), winSize.windowSize.x, winSize.windowSize.y);
 
 	glUniform1i(glGetUniformLocation(mainProg, "gridWidth"), gridWidth);
 	glUniform1i(glGetUniformLocation(mainProg, "gridHeight"), gridHeight);
 	glUniform1ui(glGetUniformLocation(mainProg, "gridWidth_actual"), grid->width_actual());
 
-	glUniform1f(glGetUniformLocation(mainProg, "cellSize_px"), cellSize_px);
-
-	GLint sizeP = glGetUniformLocation(mainProg, "size");
-	GLint posP = glGetUniformLocation(mainProg, "pos");
+	GLint vpSizeP = glGetUniformLocation(mainProg, "vpSize");
+	GLint vpPosP = glGetUniformLocation(mainProg, "vpPos");
 
 	GLint mousePosP = glGetUniformLocation(mainProg, "mousePos");
 	GLint zoomPointP = glGetUniformLocation(mainProg, "zoomPoint");
@@ -591,7 +616,7 @@ int main() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, int(windowSize.x), int(windowSize.y), 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, winSize.windowSize.x, winSize.windowSize.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 	glBindTexture(GL_TEXTURE_2D, 0);
 
 	glGenFramebuffers(1, &frameBuffer);
@@ -625,13 +650,8 @@ int main() {
 	GLint ppDeltaSizeChangeP = glGetUniformLocation(postProcessingProg, "deltaSizeChange");
 	GLint deltaOffsetChangeP = glGetUniformLocation(postProcessingProg, "deltaOffsetChange");
 
-	glUniform1d(glGetUniformLocation(postProcessingProg, "size"), cellSize_px);
-
 	glUniform1f(glGetUniformLocation(postProcessingProg, "lensDistortion"), lensDistortion);
 	GLint ppZoomPointP = glGetUniformLocation(postProcessingProg, "zoomPoint");
-
-	GLint r1P = glGetUniformLocation(mainProg, "r1");
-	GLint r2P = glGetUniformLocation(mainProg, "r2");
 
 	lastGridUpdateTime = lastScreenUpdateTime = curTime = std::chrono::steady_clock::now();
 
@@ -645,19 +665,15 @@ int main() {
 		{
 
 			Timer<> t{};
-			glUniform1d(sizeP, currentSize);
-
-			glUniform2d(posP, currentPosition.x, currentPosition.y); 
+			glUniform2f(vpPosP, space.vpPos.x, space.vpPos.y); 
+			glUniform1f(vpSizeP, space.vpSize);
 
 			glUniform2f(mousePosP, mousePos.x, mousePos.y);
 			glUniform2f(zoomPointP, zoomPoint.x, zoomPoint.y);
 
-			glUniform1f(r1P, r1);
-			glUniform1f(r2P, r2);
-
 			glUniform1ui(is2ndBufferP, !isBufferSecond);
 
-			glUniform1f(mDeltaScaleChangeP, deltaSizeChange);
+			glUniform1f(mDeltaScaleChangeP, dVpSize);
 
 			glFinish();
 
@@ -682,6 +698,7 @@ int main() {
 			}
 
 			{
+                auto const windowSize = winSize.windowSizeD;
 				Timer<> t{};
 				glUseProgram(postProcessingProg);
 				glBindTexture(GL_TEXTURE_2D, frameBufferTexture);
@@ -689,8 +706,8 @@ int main() {
 				glUniform1i(frameBufferP, 0);
 				glUniform2f(textureSizeP, windowSize.x, windowSize.y);
 
-				glUniform1f(ppDeltaSizeChangeP, deltaSizeChange);
-				glUniform2f(deltaOffsetChangeP, deltaPosChange.x / windowSize.x, -deltaPosChange.y / windowSize.y);
+				glUniform1f(ppDeltaSizeChangeP, dVpSize);
+				glUniform2f(deltaOffsetChangeP, dVpPos.x / windowSize.x, -dVpPos.y / windowSize.y);
 				glUniform2f(ppZoomPointP, zoomPoint.x / windowSize.x, 1 - zoomPoint.y / windowSize.y);
 
 				glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, 1);

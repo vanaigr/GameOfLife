@@ -864,21 +864,17 @@ void Field::finishGeneration() {
 				previousRemainder = {};
 			}
 			else {
-				previousRemainder = {
+                previousRemainder = {
 					static_cast<uint16_t>(
-								(
-									field.cellAt_actual(index_actual - 2 - width_actual) +
-									field.cellAt_actual(index_actual - 2 + 0) +
-									field.cellAt_actual(index_actual - 2 + width_actual)
-								) +
-								(static_cast<uint16_t>(
-									 field.cellAt_actual(index_actual - 1 - width_actual) +
-									 field.cellAt_actual(index_actual - 1 + 0) +
-									 field.cellAt_actual(index_actual - 1 + width_actual))
-								 << 8
-								)
-					),
-								field.cellAt_actual(index_actual - 1)
+                        (field.cellAt_actual(index_actual - 2 - width_actual)
+                            + field.cellAt_actual(index_actual - 2 + 0)
+                            + field.cellAt_actual(index_actual - 2 + width_actual))
+                        + ((field.cellAt_actual(index_actual - 1 - width_actual)
+                            + field.cellAt_actual(index_actual - 1 + 0)
+                            + field.cellAt_actual(index_actual - 1 + width_actual)
+                        ) << 8)
+                    ),
+                    field.cellAt_actual(index_actual - 1)
 				};
 			}
 

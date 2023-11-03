@@ -1,3 +1,6 @@
 /dependencies/
 /build/
+/build-*/
 /b.bat
+/CMakeFiles/
+/CMakeCache.txt
