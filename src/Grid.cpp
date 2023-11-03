@@ -899,9 +899,9 @@ void Field::finishGeneration() {
 				newGeneration = (newGeneration & ~uint32_t(1)) | (updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid, gridPimpl) == FieldCell::ALIVE);
 			}
 			if (!isEdgeOpt && gridPimpl->isLastCol_Index_actual_int(index_actual_int)) {
-				newGeneration = 
-					(newGeneration & (uint32_t(~0) >> 1)) | 
-					(updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid + field.width_grid - 1, gridPimpl) == FieldCell::ALIVE ? ~(uint32_t(~0) >> 1) : 0);
+                const auto lastCellCol = misc::mod(field.width_grid-1, batchSize);
+				newGeneration = (newGeneration & ~(uint32_t(1) << lastCellCol)) 
+					| (uint32_t(updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid + field.width_grid - 1, gridPimpl) == FieldCell::ALIVE) << lastCellCol);
 			}
 
 
