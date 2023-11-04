@@ -62,7 +62,7 @@ static double dVpSizeDesired, dVpSize;
 vec2d desiredZoomPoint, zoomPoint; //TODO: init
 bool isZoomChanged;
 
-const uint32_t gridWidth = 62, gridHeight = 30;
+const uint32_t gridWidth = 60, gridHeight = 30;
 const uint32_t gridSize = gridWidth * gridHeight;
 const uint32_t numberOfTasks = 1;
 std::unique_ptr<Field> grid;
@@ -139,7 +139,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
     else if(key == GLFW_KEY_W && action == GLFW_RELEASE) r1 = 1;
     if (action == GLFW_PRESS) {
         if (key == GLFW_KEY_ENTER) {
-            grid->fill(FieldCell::DEAD);
+            grid->fill(fieldCell::cellDead);
         }
         else if (key == GLFW_KEY_SPACE) { //sace
             gridUpdate = !gridUpdate;
@@ -221,7 +221,7 @@ void printMouseCellInfo() {
 
     for (int i = -1; i <= 1; i++) {
         for (int j = -1; j <= 1; j++)
-            std::cout << (fieldCell::isAlive(grid->cellAtCoord(mouseCellCoord + vec2i(j, i))) ? '1' : '0') << ' ';
+            std::cout << (grid->cellAtCoord(mouseCellCoord + vec2i(j, i)) ? '1' : '0') << ' ';
         std::cout << std::endl;
     }
 }
@@ -379,7 +379,7 @@ void updateState() {
 
                 cells.push_back(
                     Cell{ 
-                        paintMode == PaintMode::PAINT ? FieldCell::ALIVE : FieldCell::DEAD,
+                        paintMode == PaintMode::PAINT ? fieldCell::cellAlive : fieldCell::cellDead,
                         grid->coordAsIndex(cell + offset)
                     }
                 );

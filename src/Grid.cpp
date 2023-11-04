@@ -15,259 +15,211 @@
 
 #include<algorithm>
 
-static const size_t sizeOfUint32 = sizeof(uint32_t);
-constexpr uint32_t batchSize = 32;// sizeof(__m128i); //dependent on CellsGrid fullSize
+using Cells = uint32_t;
+static constexpr auto cellsBatchSize = 4;
+static constexpr auto cellsBatchLength = 32;
 
-bool fieldCell::isAlive(const FieldCell cell) {
-    return ((misc::to_underlying(cell)) & 0b1);
-}
-bool fieldCell::isDead(const FieldCell cell) {
-    return !isAlive(cell);
-}
+struct Field::FieldPimpl {
+    using BufferType = bool;
+    static constexpr BufferType bufCur = false;
+    static constexpr BufferType bufNext = true;
 
-FieldCell fieldCell::nextGeneration(const FieldCell cell, const uint32_t aliveNeighboursCount) {
-    if (fieldCell::isDead(cell) && aliveNeighboursCount == 3) {
-        return FieldCell::ALIVE;
+    int32_t virtualWidth;
+    int32_t height;
+    int32_t rowLength;
+    bool edgeCellsOptimization;
+
+    std::unique_ptr<Cells> currentBuf; 
+    std::unique_ptr<Cells> nextBuf;
+
+public:
+    FieldPimpl(const int32_t gridWidth, const int32_t gridHeight) {
+        virtualWidth = gridWidth;
+        height = gridHeight;
+        rowLength = misc::intDivCeil(virtualWidth, cellsBatchLength);
+        edgeCellsOptimization = rowLength * cellsBatchLength - virtualWidth >= 2; 
+
+        auto const bufferLen = bufferLength();
+        currentBuf = std::unique_ptr<Cells>{ new Cells[bufferLen]{} };
+        nextBuf    = std::unique_ptr<Cells>{ new Cells[bufferLen]{} };
     }
-    else if (fieldCell::isAlive(cell) && (aliveNeighboursCount < 2 || aliveNeighboursCount > 3)) {
-        return FieldCell::DEAD;
-    }
-    return cell;
-}
-
-
-class Field::FieldPimpl {
-public:
-    struct current {};
-    struct buffer  {};
-public:
-    const int32_t width_grid;
-    const int32_t width_actual;
-    const int32_t width_int;
-    const int32_t height;
-    const int32_t size_grid;
-    const int32_t size_actual;
-    const int32_t size_int;
-    const bool edgeCellsOptimization;
-private:
-    const int32_t startPadding_int;
-    const int32_t endPadding_int;
-    const int32_t fullSize_int;
-
-    std::unique_ptr<uint32_t[]> current_; 
-    std::unique_ptr<uint32_t[]> buffer_;
-
-public:
-    FieldPimpl(const int32_t gridWidth, const int32_t gridHeight) :
-        width_grid{ gridWidth },
-        width_actual{ static_cast<int32_t>(misc::roundUpIntTo(width_grid, batchSize)) },
-        width_int{ static_cast<int32_t>(misc::intDivCeil(width_actual, batchSize)) },
-
-        height{ gridHeight },
-
-        size_grid(width_grid * height),
-        size_actual{ width_actual * height },
-        size_int{ static_cast<int32_t>(misc::intDivCeil(width_actual * height, batchSize)) },
-
-        edgeCellsOptimization{ (width_actual - width_grid) >= 2 },
-
-        startPadding_int{ width_int + (edgeCellsOptimization ? 1 : 0) }, /*
-            top row duplicate before the first row
-            + one batch for cell index 0 neighbours
-        */
-        endPadding_int{ static_cast<int32_t>(misc::intDivCeil(width_grid, batchSize) + 1) }, /*
-            bottom row duplicate after the last row
-            + extra bytes for
-                memcopy/vector instructions and
-                left/right boundary cells update
-            all in 'void threadUpdateGrid(std::unique_ptr<Field::GridData>&)'
-        */
-        fullSize_int{ startPadding_int + size_int + endPadding_int },
-        current_{ new uint32_t[fullSize_int]{ } },
-        buffer_{ new uint32_t[fullSize_int]{ } }
-    { };
     ~FieldPimpl() = default;
 
-    template<typename gridType = current>
-    void fixField() {
-        auto* grid{ getGrid<gridType>() };
+    void fixField(BufferType const type = bufCur) {
+        auto grid = getBuffer(type);
+        auto const paddingLen = bufferPaddingLength();
+        auto const gridLen = gridLength();
 
         std::memcpy(
-            &grid[startPadding_int - width_int],
-            &(grid[startPadding_int + size_int - width_int]),
-            width_int * sizeOfUint32
+            &grid[paddingLen - rowLength],
+            &(grid[paddingLen + gridLen - rowLength]),
+            rowLength * cellsBatchSize
         ); //start padding
 
         std::memcpy(
-            &grid[startPadding_int + size_int],
-            &(grid[startPadding_int]),
-            width_int * sizeOfUint32
+            &grid[paddingLen + gridLen],
+            &(grid[paddingLen]),
+            rowLength * cellsBatchSize
         ); //end padding
 
         if (edgeCellsOptimization) {
-            const int32_t firstEmptyCellInColIndex_int = width_grid / batchSize;
-            const int32_t firstEmptyCellIndexInBatch = width_grid % batchSize;
+            const int32_t firstEmptyCellInColIndex_int = virtualWidth / cellsBatchLength;
+            const int32_t firstEmptyCellIndexInBatch = virtualWidth % cellsBatchLength;
 
-            //one batch beforw first row
+            //one batch before first row
             {
                 uint32_t& cells = grid[0];
-                uint32_t& cells_nextRow = grid[width_int];
+                uint32_t& cells_nextRow = grid[rowLength];
 
                 const uint32_t lastCell = (cells_nextRow >> (firstEmptyCellIndexInBatch - 1)) & 1;
-                const uint32_t lastCellCopy_bit = lastCell << (batchSize - 1); //last cell on next row -copy> lastBit
+                const uint32_t lastCellCopy_bit = lastCell << (cellsBatchLength - 1); //last cell on next row -copy> lastBit
 
                 cells = lastCellCopy_bit;
             }
 
             for (int32_t row = -1; row < height; row++) {
-                const int32_t row_int = row * width_int;
+                const int32_t row_int = row * rowLength;
                 const int32_t index_int = row_int + firstEmptyCellInColIndex_int;
 
-                uint32_t& cells = getCellsActual_int<gridType>(index_int);
-                uint32_t& cells_nextRow = getCellsActual_int<gridType>(index_int + width_int);
-                uint32_t& cells_rowStart = getCellsActual_int<gridType>(row_int);
+                uint32_t& cells = getCellsActual_int(index_int, type);
+                uint32_t& cells_nextRow = getCellsActual_int(index_int + rowLength, type);
+                uint32_t& cells_rowStart = getCellsActual_int(row_int, type);
 
                 const uint32_t lastCell = (cells_nextRow >> (firstEmptyCellIndexInBatch - 1)) & 1;
-                const uint32_t lastCellCopy_bit = lastCell << (batchSize - 1); //last cell on next row -copy> lastBit
+                const uint32_t lastCellCopy_bit = lastCell << (cellsBatchLength - 1); //last cell on next row -copy> lastBit
 
                 const uint32_t firstCell = cells_rowStart & 1;
                 const uint32_t firstCellCopy_bit = firstCell << (firstEmptyCellIndexInBatch); //first cell -copy> firstEmptyBit (after last cell original)
 
-                cells = (cells & (~0u >> (batchSize - firstEmptyCellIndexInBatch))) | firstCellCopy_bit | lastCellCopy_bit;
+                cells = (cells & (~0u >> (cellsBatchLength - firstEmptyCellIndexInBatch))) | firstCellCopy_bit | lastCellCopy_bit;
             }
 
             //last row
             {
-                const int32_t row_int = height * width_int;
+                const int32_t row_int = height * rowLength;
                 const int32_t index_int = row_int + firstEmptyCellInColIndex_int;
 
-                uint32_t& cells = getCellsActual_int<gridType>(index_int);
-                uint32_t& cells_rowStart = getCellsActual_int<gridType>(row_int);
+                uint32_t& cells = getCellsActual_int(index_int, type);
+                uint32_t& cells_rowStart = getCellsActual_int(row_int, type);
 
                 const uint32_t firstCell = cells_rowStart & 1;
                 const uint32_t firstCellCopy_bit = firstCell << (firstEmptyCellIndexInBatch); //first cell -copy> firstEmptyBit (after last cell original)
 
-                cells = (cells & (~0u >> (batchSize - firstEmptyCellIndexInBatch))) | firstCellCopy_bit;
+                cells = (cells & (~0u >> (cellsBatchLength - firstEmptyCellIndexInBatch))) | firstCellCopy_bit;
             }
         }
     }
 
-    void swapBuffers() {
-        current_.swap(buffer_);
+    void swapBuffers() { currentBuf.swap(nextBuf); }
+
+    void fill(FieldCell const cell, BufferType const type = bufCur) {
+        auto grid = getBuffer(type);
+        const auto val = ~0u * cell;
+        std::fill(&grid[0], &grid[0] + bufferLength(), val);
     }
 
-    template<typename gridType = current>
-    void fill(FieldCell const cell) {
-        auto* grid{ getGrid<gridType>() };
-        const auto val = ~0u * fieldCell::isAlive(cell);
-        std::fill(&grid[0], &grid[0] + fullSize_int, val);
+    uint8_t cellAt_grid(int32_t const index, BufferType const type = bufCur) const {
+        auto grid = getBuffer(type);
+        const auto row = misc::intDivFloor(index, virtualWidth);
+        const auto col = misc::mod(index, virtualWidth);
+
+        const auto col_int = col / cellsBatchLength;
+        const auto shift = col % cellsBatchLength;
+
+        return (grid[bufferPaddingLength() + row * rowLength + col_int] >> shift) & 0b1;
     }
 
-    template<typename gridType = current>
-    uint8_t cellAt_grid(int32_t const index) const {
-        auto* grid{ getGrid<gridType>() };
-        const auto row = misc::intDivFloor(index, width_grid);
-        const auto col = misc::mod(index, width_grid);
+    uint8_t cellAt_actual(int32_t const index, BufferType const type = bufCur) const {
+        auto grid = getBuffer(type);
 
-        const auto col_int = col / batchSize;
-        const auto shift = col % batchSize;
+        const auto offset = misc::intDivFloor(index, int32_t(cellsBatchLength));
+        const auto shift = misc::mod(index, cellsBatchLength);
 
-        return (grid[startPadding_int + row * width_int + col_int] >> shift) & 0b1;
+        return (grid[bufferPaddingLength() + offset] >> shift) & 0b1;
     }
 
-    template<typename gridType = current>
-    uint8_t cellAt_actual(int32_t const index) const {
-        auto* grid{ getGrid<gridType>() };
-
-        const auto offset = misc::intDivFloor(index, int32_t(batchSize));
-        const auto shift = misc::mod(index, batchSize);
-
-        return (grid[startPadding_int + offset] >> shift) & 0b1;
+    FieldCell cellAt(int32_t const index, BufferType const type = bufCur) const {
+        return cellAt_grid(index, type);
     }
 
-    template<typename gridType = current>
-    FieldCell cellAt(int32_t const index) const {
-        return cellAt_grid<gridType>(index) ? FieldCell::ALIVE : FieldCell::DEAD;
+    void setCellAt(int32_t const index, FieldCell const cell, BufferType const type = bufCur) {
+        auto grid = getBuffer(type);
+
+        const auto row = misc::intDivFloor(index, int32_t(virtualWidth));
+        const auto col = misc::mod(index, virtualWidth);
+
+        const auto col_int = col / cellsBatchLength;
+        const auto shift = col % cellsBatchLength;
+
+        auto& cur{ grid[bufferPaddingLength() + row * rowLength + col_int] };
+
+        cur = (cur & ~(0b1u << shift)) | (static_cast<uint32_t>(cell) << shift);
     }
 
-    template<typename gridType = current>
-    void setCellAt(int32_t const index, FieldCell const cell) {
-        auto* grid{ getGrid<gridType>() };
+    uint32_t& getCellsInt(int32_t const index, BufferType const type = bufCur) const {
+        auto grid = getBuffer(type);
+        const auto row = misc::intDivFloor(index, int32_t(virtualWidth));
+        const auto col = misc::mod(index, virtualWidth);
 
-        const auto row = misc::intDivFloor(index, int32_t(width_grid));
-        const auto col = misc::mod(index, width_grid);
+        const auto col_int = col / cellsBatchLength;
 
-        const auto col_int = col / batchSize;
-        const auto shift = col % batchSize;
-
-        auto& cur{ grid[startPadding_int + row * width_int + col_int] };
-
-        cur = (cur & ~(0b1u << shift)) | (static_cast<uint32_t>(fieldCell::isAlive(cell)) << shift);
+        return grid[bufferPaddingLength() + row * rowLength + col_int];
     }
 
-    template<typename gridType = current>
-    uint32_t& getCellsInt(int32_t const index) const {
-        auto* grid{ getGrid<gridType>() };
-        const auto row = misc::intDivFloor(index, int32_t(width_grid));
-        const auto col = misc::mod(index, width_grid);
-
-        const auto col_int = col / batchSize;
-
-        return grid[startPadding_int + row * width_int + col_int];
-    }
-
-    template<typename gridType = current>
-    uint32_t& getCellsActual_int(int32_t const index_actual_int) const {
-        return getGrid<gridType>()[index_actual_int + startPadding_int];
+    uint32_t& getCellsActual_int(int32_t const index_actual_int, BufferType const type = bufCur) const {
+        return getBuffer(type)[index_actual_int + bufferPaddingLength()];
     }
 
     uint32_t indexAsActualInt(const uint32_t index) const {
-        const auto row = misc::intDivFloor(index, width_grid);
-        const auto col = misc::mod(index, width_grid);
+        const auto row = misc::intDivFloor(index, virtualWidth);
+        const auto col = misc::mod(index, virtualWidth);
 
-        const auto col_int = col / batchSize;
+        const auto col_int = col / cellsBatchLength;
 
-        return row * width_int + col_int;
+        return row * rowLength + col_int;
     }
 
     constexpr bool isFirstCol_Index_actual_int(const int32_t index_actual_int) const {
-        const auto col = misc::mod(index_actual_int, width_int);
+        const auto col = misc::mod(index_actual_int, rowLength);
         return col == 0;
     }
     constexpr bool isLastCol_Index_actual_int(int32_t const index_actual_int) const {
-        const auto col = misc::mod(index_actual_int, width_int);
-        return col == (width_int - 1);
+        const auto col = misc::mod(index_actual_int, rowLength);
+        return col == (rowLength - 1);
     }
 
     constexpr int32_t index_actual_int_asRow(int32_t const index_actual_int) const {
-        return misc::intDivFloor(index_actual_int, width_int);
+        return misc::intDivFloor(index_actual_int, rowLength);
     }
 
     constexpr int32_t indexActualIntAsActual(int32_t const index_actual_int) const {
-        return index_actual_int * int32_t(batchSize);
+        return index_actual_int * int32_t(cellsBatchLength);
     }
 
     constexpr int32_t index_actual_intAsindex(int32_t const index_actual_int) const {
         const int32_t index_actual = indexActualIntAsActual(index_actual_int);
-        const auto row = misc::intDivFloor(index_actual, width_int);
-        const auto col = misc::mod(index_actual, width_int);
+        const auto row = misc::intDivFloor(index_actual, rowLength);
+        const auto col = misc::mod(index_actual, rowLength);
         //assert(index_actual < width_int);
 
-        return row * width_grid + col;
+        return row * virtualWidth + col;
     }
 
-private:
-    template<typename gridType>
-    inline uint32_t* getGrid() const;
-
-    template<>
-    inline uint32_t* getGrid<current>() const {
-        return this->current_.get();
+    Cells *getBuffer(BufferType const type) const {
+        if(type == bufCur) return currentBuf.get();
+        else return nextBuf.get();
     }
-
-    template<>
-    inline uint32_t* getGrid<buffer>() const {
-        return this->buffer_.get();
+    uint32_t gridLength() const {
+        return height * rowLength;
+    }
+    uint32_t bufferPaddingLength() const {
+        return rowLength + 1/*
+            extra row before/after the grid repeating the opposite row 
+            and 1 cell on each side for the first/last cell's neighbour
+        */;
+    }
+    uint32_t bufferLength() const {
+        return gridLength() + 2*bufferPaddingLength();
     }
 };
 
@@ -364,7 +316,7 @@ inline static uint32_t newGenerationBatched(
         return _mm_or_si128(resultlower4, resultHigher4);
     };
 
-    int32_t width_int = field.width_int;
+    int32_t width_int = field.rowLength;
 
     const uint32_t topCellRow_uint_{ field.getCellsActual_int(index_actual_batch - width_int) };
     const uint32_t curCellRow_uint_{ field.getCellsActual_int(index_actual_batch) };
@@ -448,12 +400,12 @@ inline static uint32_t newGenerationBatched(
 static void threadUpdateGrid(Field::GridData& data) {
     Timer<> t{};
     auto& grid = *data.grid.get();
-    int32_t const width_grid = static_cast<int32_t>(grid.width_grid);
-    int32_t const width_actual = static_cast<int32_t>(grid.width_actual);
-    int32_t const width_int = static_cast<int32_t>(grid.width_int);
+    int32_t const width_grid = static_cast<int32_t>(grid.virtualWidth);
+    int32_t const width_actual = static_cast<int32_t>(grid.rowLength * cellsBatchLength);
+    int32_t const width_int = static_cast<int32_t>(grid.rowLength);
 
 
-    const auto setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid.setCellAt<Field::FieldPimpl::buffer>(index, cell); };
+    const auto setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid.setCellAt(index, cell, Field::FieldPimpl::bufNext); };
 
     const auto isCell_actual = [&grid](int32_t index) -> uint8_t {
         return grid.cellAt_actual(index);
@@ -462,12 +414,12 @@ static void threadUpdateGrid(Field::GridData& data) {
 
     int32_t const startBatch = data.startBatch;
     int32_t const endBatch = data.endBatch;
-    int32_t const startIndex = startBatch * batchSize;
-    int32_t const endIndex = endBatch * batchSize; //may be out of bounds padding required
+    int32_t const startIndex = startBatch * cellsBatchLength;
+    int32_t const endIndex = endBatch * cellsBatchLength; //may be out of bounds padding required
 
     int32_t i = startBatch;
 
-    int32_t i_actual_grid = i * int32_t(batchSize); 
+    int32_t i_actual_grid = i * int32_t(cellsBatchLength); 
      
 
     Remainder previousRemainder{
@@ -499,7 +451,7 @@ static void threadUpdateGrid(Field::GridData& data) {
             const uint32_t newGen = newGenerationBatched(grid, previousRemainder, i, previousRemainder/*out param*/);
 
             newGenWindow = (newGenWindow >> 32) | (uint64_t(newGen) << 31);
-            grid.getCellsActual_int<Field::FieldPimpl::buffer>(i - 1) = uint32_t(newGenWindow);
+            grid.getCellsActual_int(i - 1, Field::FieldPimpl::bufNext) = uint32_t(newGenWindow);
 
             //_mm_stream_si32((int*)&grid.getCellsActual_int<Field::FieldPimpl::buffer>(i_batch - 1), (int)uint32_t(newGenWindow));
         }
@@ -511,7 +463,7 @@ static void threadUpdateGrid(Field::GridData& data) {
         const uint32_t newGen = newGenerationBatched(grid, previousRemainder, i, previousRemainder/*out param*/);
 
         newGenWindow = (newGenWindow >> 32) | (uint64_t(newGen) << 31);
-        grid.getCellsActual_int<Field::FieldPimpl::buffer>(i - 1) = uint32_t(newGenWindow);
+        grid.getCellsActual_int(i - 1, Field::FieldPimpl::bufNext) = uint32_t(newGenWindow);
     }
 
     if (data.interrupt_flag.load()) return;
@@ -614,11 +566,11 @@ static void threadUpdateGrid(Field::GridData& data) {
 
     Timer<> t2{};
      
-    data.buffer_output->write(FieldModification{ data.startBatch, data.endBatch - data.startBatch, &grid.getCellsActual_int<Field::FieldPimpl::buffer>(startBatch) });
+    data.buffer_output->write(FieldModification{ data.startBatch, data.endBatch - data.startBatch, &grid.getCellsActual_int(startBatch, Field::FieldPimpl::bufNext) });
 
     data.bufferSend.add(t2.elapsedTime());
 
-    const uint32_t j = 1 << (data.task__iteration % (((grid.width_grid-1) % 32) + 1));
+    const uint32_t j = 1 << (data.task__iteration % (((grid.virtualWidth-1) % 32) + 1));
     const uint32_t zero = 0;
     if(false) {
         auto output = data.buffer_output->batched();
@@ -631,15 +583,11 @@ static void threadUpdateGrid(Field::GridData& data) {
 }
 
 uint32_t Field::width_actual() const {
-    return gridPimpl->width_actual;
+    return gridPimpl->rowLength * cellsBatchLength;
 }
 
 uint32_t Field::size_bytes() const {
-    return gridPimpl->size_int * sizeOfUint32;
-}
-
-uint32_t Field::size_actual() const {
-    return gridPimpl->size_actual;
+    return gridPimpl->gridLength() * cellsBatchSize;
 }
 
 uint32_t* Field::rawData() const {
@@ -706,7 +654,7 @@ Field::Field(
     };
 
     uint32_t batchesBefore = 0;
-    uint32_t remainingBatches = gridPimpl->size_int;
+    uint32_t remainingBatches = gridPimpl->gridLength();
 
     const double amountOfWorkT1 = remainingBatches / (pow((1.0 + fraction), numberOfTasks) - 1) * fraction;
 
@@ -747,14 +695,14 @@ void Field::fill(const FieldCell cell) {
 
     indecesToBrokenCells.clear();
 
-    current_output->write(FieldModification{ 0, static_cast<uint32_t>(gridPimpl->size_int), &gridPimpl->getCellsActual_int(0) });
+    current_output->write(FieldModification{ 0, static_cast<uint32_t>(gridPimpl->gridLength()), &gridPimpl->getCellsActual_int(0) });
     
 
     deployGridTasks();
 }
 
 FieldCell Field::cellAtIndex(const uint32_t index) const {
-    return gridPimpl->cellAt<>(normalizeIndex(index));
+    return gridPimpl->cellAt(normalizeIndex(index));
 }
 
 void Field::setCellAtIndex(const uint32_t index, FieldCell cell) {
@@ -797,7 +745,7 @@ void Field::setCells(Cell const* const cells, size_t const count) {
 }
 
 static FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
-    const auto width_grid = cellsGrid->width_grid;
+    const auto width_grid = cellsGrid->virtualWidth;
     const auto height = cellsGrid->height;
     uint8_t cell = cellsGrid->cellAt_grid(index);
 
@@ -815,7 +763,7 @@ static FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::F
         }
     }
 
-    return fieldCell::nextGeneration(cell ? FieldCell::ALIVE : FieldCell::DEAD, aliveNeighbours);
+    return fieldCell::nextGeneration(cell, aliveNeighbours);
 }
 
 bool Field::tryFinishGeneration() {
@@ -849,12 +797,12 @@ bool Field::tryFinishGeneration() {
             }
         }
 
-        gridPimpl->fixField<FieldPimpl::current>();
+        gridPimpl->fixField();
 
         std::unique_ptr<FieldOutput> output = buffer_output->batched();
         auto& field = *this->gridPimpl.get();
-        int32_t width_actual = field.width_actual;
-        int32_t width_grid = field.width_grid;
+        int32_t width_actual = field.rowLength * cellsBatchLength;
+        int32_t width_grid = field.virtualWidth;
         for (uint32_t index_actual_int : repairedCells_actual_int) {
             bool const isEdgeOpt = gridPimpl->edgeCellsOptimization;
             auto const specialFirstCell = !isEdgeOpt && gridPimpl->isFirstCol_Index_actual_int(index_actual_int);
@@ -889,23 +837,23 @@ bool Field::tryFinishGeneration() {
             else {
                 newGenerationWindow =
                     (newGenerationWindow >> 1) |
-                    (uint64_t(newGenerationBatched(*gridPimpl.get(), previousRemainder, index_actual_int + 1, previousRemainder)) << (batchSize - 1));
+                    (uint64_t(newGenerationBatched(*gridPimpl.get(), previousRemainder, index_actual_int + 1, previousRemainder)) << (cellsBatchLength - 1));
             }
 
             uint32_t newGeneration = static_cast<uint32_t>(newGenerationWindow);
 
             if(specialFirstCell) {
-                newGeneration = (newGeneration & ~uint32_t(1)) | (updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid, gridPimpl) == FieldCell::ALIVE);
+                newGeneration = (newGeneration & ~uint32_t(1)) | (updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid, gridPimpl));
             }
 
             if(specialLastCell) {
-                const auto lastCellCol = misc::mod(field.width_grid-1, batchSize);
+                const auto lastCellCol = misc::mod(field.virtualWidth-1, cellsBatchLength);
                 newGeneration = (newGeneration & ~(uint32_t(1) << lastCellCol)) 
-                    | (uint32_t(updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid + field.width_grid - 1, gridPimpl) == FieldCell::ALIVE) << lastCellCol);
+                    | (uint32_t(updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid + field.virtualWidth - 1, gridPimpl)) << lastCellCol);
             }
 
 
-            gridPimpl->getCellsActual_int<Field::FieldPimpl::buffer>(index_actual_int) = newGeneration;
+            gridPimpl->getCellsActual_int(index_actual_int, Field::FieldPimpl::bufNext) = newGeneration;
             output->write(FieldModification{ index_actual_int, 1, &newGeneration });
         }
         indecesToBrokenCells.clear();
@@ -917,6 +865,12 @@ bool Field::tryFinishGeneration() {
 void Field::startNewGeneration() {
     gridPimpl->swapBuffers();
     startCurGeneration();
+}
+
+void Field::startCurGeneration() {
+    gridPimpl->fixField();
+    isStopped = false;
+    deployGridTasks();
 }
 
 void Field::waitForGridTasks() {
@@ -935,18 +889,12 @@ void Field::deployGridTasks() {
     }
 }
 
-void Field::startCurGeneration() {
-    gridPimpl->fixField<Field::FieldPimpl::current>();
-    isStopped = false;
-    deployGridTasks();
-}
-
 uint32_t Field::width() const {
-    return gridPimpl->width_grid;
+    return gridPimpl->virtualWidth;
 }
 uint32_t Field::height() const {
     return gridPimpl->height;
 }
 uint32_t Field::size() const {
-    return gridPimpl->size_grid;
+    return gridPimpl->virtualWidth * gridPimpl->height;
 }

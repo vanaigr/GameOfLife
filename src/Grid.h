@@ -12,22 +12,19 @@
 #include"MedianCounter.h"
 #include<functional>
 
-enum class FieldCell : uint8_t
-{
-    DEAD = 0,
-    ALIVE = 1
-}; //TODO: change to bool
+using FieldCell = bool;
 
 namespace fieldCell {
-    bool isAlive(const FieldCell cell);
-    bool isDead(const FieldCell cell);
-    FieldCell nextGeneration(const FieldCell cell, const uint32_t aliveNegihboursCount);
+    static constexpr FieldCell cellAlive = true;
+    static constexpr FieldCell cellDead = false;
+
+    inline FieldCell nextGeneration(FieldCell const cell, uint8_t const aliveNeighboursCount) {
+        if(!cell && aliveNeighboursCount == 3) return true;
+        else if(cell && aliveNeighboursCount != 2 && aliveNeighboursCount != 3) return false;
+        else return cell;
+    }
     inline constexpr char const *asString(const FieldCell cell) {
-        switch (cell) {
-            case FieldCell::DEAD : return "dead" ;
-            case FieldCell::ALIVE: return "alive";
-            default: return "error";
-        }
+        return cell ? "alive" : "dead";
     }
 }
 
@@ -36,26 +33,24 @@ struct FieldModification {
     const uint32_t *data;
 };
 
-class FieldOutput {
-public:
+struct FieldOutput { //TODO: remove
     virtual void write(FieldModification fm) {
         this->batched()->write(fm);
     }
 
     virtual std::unique_ptr<FieldOutput> batched() const = 0;
     virtual ~FieldOutput() = default;
-
-};//must be used as output only in one thread
-
+}; //must be used as output only in one thread
 
 
 struct Cell {
     FieldCell cell;
     int32_t index;
 };
+
 class Field final {
 public:
-    class FieldPimpl;
+    struct FieldPimpl;
     struct GridData;
 private:
     std::unique_ptr<FieldPimpl> gridPimpl;
@@ -106,7 +101,7 @@ public:
     uint32_t size() const;
 
     uint32_t size_bytes() const;
-    uint32_t size_actual() const;
+    //uint32_t size_actual() const;
     uint32_t width_actual() const;
     uint32_t *rawData() const;
 private:
@@ -148,3 +143,4 @@ inline int32_t Field::normalizeIndex(const int32_t index) const {
 inline vec2i Field::normalizeCoord(const vec2i& coord) const {
     return vec2i(misc::mod(coord.x, width()), misc::mod(coord.y, height()));
 }
+
