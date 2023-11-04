@@ -179,7 +179,7 @@ public:
 	uint8_t cellAt_actual(int32_t const index) const {
 		auto* grid{ getGrid<gridType>() };
 
-		const auto offset = misc::intDivFloor(index, int32_t(width_actual));
+		const auto offset = misc::intDivFloor(index, int32_t(batchSize));
 		const auto shift = misc::mod(index, batchSize);
 
 		return (grid[startPadding_int + offset] >> shift) & 0b1;
