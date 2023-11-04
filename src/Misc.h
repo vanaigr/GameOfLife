@@ -5,8 +5,6 @@
 #include <cassert>
 
 
-
-
 #define print_msg(msg) { std::cout << (msg) << std::endl; }
 
 #include<iostream>
@@ -20,7 +18,7 @@ inline void print(const char* msg, uint32_t arg) {
 
 namespace misc {
     template<class T>
-    constexpr T lerp(T a, T b, T f) noexcept {
+    inline constexpr T lerp(T a, T b, T f) noexcept {
         return a + f * (b - a);
     }
 
@@ -39,9 +37,11 @@ namespace misc {
         return static_cast<typename std::underlying_type<E>::type>(e);
     }
 
-    extern float modf(const float x, const float y) noexcept;
+    inline float modf(const float x, const float y) noexcept {
+        return x - y * floor(x / y);
+    }
 
-    constexpr int32_t mod(const int32_t x, const int32_t y) noexcept {
+    inline constexpr int32_t mod(const int32_t x, const int32_t y) noexcept {
         int32_t mod = x % y;
         // if the signs are different and modulo not zero, adjust result
         if ((x ^ y) < 0 && mod != 0) {
@@ -50,7 +50,7 @@ namespace misc {
         return mod;
     }
 
-    constexpr uint32_t umod(const uint32_t x, const uint32_t y) noexcept {
+    inline constexpr uint32_t umod(const uint32_t x, const uint32_t y) noexcept {
         return x % y;
     }
 
