@@ -856,32 +856,34 @@ bool Field::tryFinishGeneration() {
 		int32_t width_actual = field.width_actual;
 		int32_t width_grid = field.width_grid;
 		for (uint32_t index_actual_int : repairedCells_actual_int) {
-			int32_t index_actual = field.indexActualIntAsActual(index_actual_int);
 			bool const isEdgeOpt = gridPimpl->edgeCellsOptimization;
+            auto const specialFirstCell = !isEdgeOpt && gridPimpl->isFirstCol_Index_actual_int(index_actual_int);
+            auto const specialLastCell = !isEdgeOpt && gridPimpl->isLastCol_Index_actual_int(index_actual_int);
 
-			Remainder previousRemainder;
-			uint64_t newGenerationWindow;
-			if (!isEdgeOpt && gridPimpl->isFirstCol_Index_actual_int(index_actual_int)) {
-				previousRemainder = {};
-			}
-			else {
-                previousRemainder = {
-					static_cast<uint16_t>(
-                        (field.cellAt_actual(index_actual - 2 - width_actual)
-                            + field.cellAt_actual(index_actual - 2 + 0)
-                            + field.cellAt_actual(index_actual - 2 + width_actual))
-                        + ((field.cellAt_actual(index_actual - 1 - width_actual)
-                            + field.cellAt_actual(index_actual - 1 + 0)
-                            + field.cellAt_actual(index_actual - 1 + width_actual)
-                        ) << 8)
-                    ),
-                    field.cellAt_actual(index_actual - 1)
-				};
-			}
+			auto previousRemainder = ([&]() -> Remainder {
+                    if(specialFirstCell) return {} /* we don't need to fill the remainder as it affects only the first two cells in the batch, one of them is from the previous row, and the second one is recalculated later*/;
+                    else {
+                        int32_t index_actual = field.indexActualIntAsActual(index_actual_int);
+                        return {
+                            static_cast<uint16_t>(
+                                (field.cellAt_actual(index_actual - 2 - width_actual)
+                                 + field.cellAt_actual(index_actual - 2 + 0)
+                                 + field.cellAt_actual(index_actual - 2 + width_actual)
+                                ) + (
+                                    (field.cellAt_actual(index_actual - 1 - width_actual)
+                                    + field.cellAt_actual(index_actual - 1 + 0)
+                                    + field.cellAt_actual(index_actual - 1 + width_actual)
+                                   ) << 8
+                                )
+                            ),
+                            field.cellAt_actual(index_actual - 1)
+                        };
+                    }
+            })();
 
-			newGenerationWindow = newGenerationBatched(*gridPimpl.get(), previousRemainder, index_actual_int, previousRemainder);
+			uint64_t newGenerationWindow = newGenerationBatched(*gridPimpl.get(), previousRemainder, index_actual_int, previousRemainder);
 
-			if (!isEdgeOpt && gridPimpl->isLastCol_Index_actual_int(index_actual_int)) {
+			if(specialLastCell) {
 				newGenerationWindow = (newGenerationWindow >> 1);
 			}
 			else {
@@ -892,10 +894,11 @@ bool Field::tryFinishGeneration() {
 
 			uint32_t newGeneration = static_cast<uint32_t>(newGenerationWindow);
 
-			if (!isEdgeOpt && gridPimpl->isFirstCol_Index_actual_int(index_actual_int)) {
+			if(specialFirstCell) {
 				newGeneration = (newGeneration & ~uint32_t(1)) | (updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid, gridPimpl) == FieldCell::ALIVE);
 			}
-			if (!isEdgeOpt && gridPimpl->isLastCol_Index_actual_int(index_actual_int)) {
+
+			if(specialLastCell) {
                 const auto lastCellCol = misc::mod(field.width_grid-1, batchSize);
 				newGeneration = (newGeneration & ~(uint32_t(1) << lastCellCol)) 
 					| (uint32_t(updatedCell(field.index_actual_int_asRow(index_actual_int) * width_grid + field.width_grid - 1, gridPimpl) == FieldCell::ALIVE) << lastCellCol);
