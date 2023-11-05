@@ -17,6 +17,13 @@ inline void print(const char* msg, uint32_t arg) {
 }
 
 namespace misc {
+    inline constexpr vec2i indexToCoord(int32_t const index, int32_t const width) {
+        auto const div = index / width;
+        auto const mod = index % width;
+        if(mod < 0) return { div-1, width + mod };
+        else return { div, mod };
+    }
+
     template<class T>
     inline constexpr T lerp(T a, T b, T f) noexcept {
         return a + f * (b - a);
