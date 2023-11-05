@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.28.0)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 project(GameOfLife)
 
 set(GAME_NAME "game")
@@ -12,9 +14,13 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(
         ${GAME_NAME} PRIVATE 
         -msse4.1
+
         -pedantic -Wall -Wextra -Werror 
+
         -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
         -Wno-unused-but-set-variable -Wno-unused-label -Wno-unused-private-field
+
+        -fansi-escape-codes -fdiagnostics-color=always
     )
 endif()
 target_compile_features(${GAME_NAME} PUBLIC cxx_std_17)
