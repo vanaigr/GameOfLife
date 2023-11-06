@@ -1,16 +1,17 @@
 #pragma once
 
 #include<iostream>
-#include <stdint.h>
-#include<memory>
-#include "Vector.h"
-#include <thread>
-#include <atomic>
-#include "Task.h"
-#include <atomic>
-#include <vector>
-#include"MedianCounter.h"
+#include<thread>
+#include<atomic>
+#include<atomic>
+#include<vector>
 #include<functional>
+#include<memory>
+#include<stdint.h>
+#include"Vector.h"
+#include"MedianCounter.h"
+#include"Task.h"
+#include"Misc.h"
 
 using FieldCell = bool;
 
@@ -48,21 +49,121 @@ struct Cell {
     int32_t index;
 };
 
-class Field final {
-public:
-    struct FieldPimpl;
+using Cells = uint32_t;
+static constexpr auto cellsBatchSize = 4;
+static constexpr auto cellsBatchLength = 32;
+
+struct Grid {
+    using index_t = int32_t;
+
+    using BufferType = bool;
+    static constexpr BufferType bufCur = false;
+    static constexpr BufferType bufNext = true;
+
+    Cells* buffer;
+
+    int32_t width;
+    int32_t height;
+    int32_t rowLength;
+    bool edgeCellsOptimization;
+    bool buffersSwapped;
+
+    Grid() = default;
+
+    Grid(const int32_t gridWidth, const int32_t gridHeight) {
+        width = gridWidth;
+        height = gridHeight;
+        rowLength = misc::intDivCeil(width, cellsBatchLength);
+        edgeCellsOptimization = rowLength * cellsBatchLength - width >= 2; 
+
+        auto const bufferLen = bufferLength();
+        auto const paddingLen = bufferPaddingLength();
+        buffer = new Cells[bufferLen*2]{};
+        buffersSwapped = false;
+    }
+
+    void fixField(BufferType const type = bufCur);
+
+    void swapBuffers() { buffersSwapped = !buffersSwapped; }
+
+    void fill(FieldCell const cell, BufferType const type = bufCur) {
+        auto grid = getBuffer(type);
+        const auto val = ~0u * cell;
+        std::fill(&grid[0], &grid[0] + bufferLength(), val);
+    }
+
+    uint8_t cellAt_grid(int32_t const index, BufferType const type = bufCur) const {
+        auto grid = getBuffer(type);
+        const auto row = misc::intDivFloor(index, width);
+        const auto col = misc::mod(index, width);
+
+        const auto col_int = col / cellsBatchLength;
+        const auto shift = col % cellsBatchLength;
+
+        return (grid[bufferPaddingLength() + row * rowLength + col_int] >> shift) & 0b1;
+    }
+
+    void setCellAt(int32_t const index, FieldCell const cell, BufferType const type = bufCur) {
+        auto grid = getBuffer(type);
+
+        const auto row = misc::intDivFloor(index, int32_t(width));
+        const auto col = misc::mod(index, width);
+
+        const auto col_int = col / cellsBatchLength;
+        const auto shift = col % cellsBatchLength;
+
+        auto& cur{ grid[bufferPaddingLength() + row * rowLength + col_int] };
+
+        cur = (cur & ~(0b1u << shift)) | (static_cast<uint32_t>(cell) << shift);
+    }
+
+    uint32_t& getCellsActual_int(int32_t const index_actual_int, BufferType const type = bufCur) const {
+        return getBuffer(type)[index_actual_int + bufferPaddingLength()];
+    }
+
+    uint32_t cellI2BatchI(const uint32_t index) const {
+        const auto row = misc::intDivFloor(index, width);
+        const auto col = misc::mod(index, width);
+
+        const auto col_int = col / cellsBatchLength;
+
+        return row * rowLength + col_int;
+    }
+
+    Cells *getBuffer(BufferType const type) const {
+        auto const offset = (type == bufNext) ^ buffersSwapped ? bufferLength() : 0;
+        return buffer + offset;
+    }
+    uint32_t gridLength() const {
+        return height * rowLength;
+    }
+    uint32_t bufferPaddingLength() const {
+        return rowLength + 1/*
+            extra row before/after the grid repeating the opposite row 
+            and 1 cell on each side for the first/last cell's neighbour,
+            padding after can be 1 shorter but not when width % batchSize, 
+            so it is +1 always for consistency
+        */;
+    }
+    uint32_t bufferLength() const {
+        return gridLength() + 2*bufferPaddingLength();
+    }
+};
+
+struct Field final {
     struct GridData;
-private:
-    std::unique_ptr<FieldPimpl> gridPimpl;
+
+    Grid grid;
     bool isStopped;
     std::unique_ptr<FieldOutput> const current_output;
     std::unique_ptr<FieldOutput> const buffer_output;
 
-    const uint32_t numberOfTasks;
+    uint32_t numberOfTasks;
     std::unique_ptr<std::unique_ptr<Task<GridData>>[/*numberOfTasks*/]> gridTasks;
     std::atomic_bool interrupt_flag;
     std::vector<uint32_t> indecesToBrokenCells;
 public:
+    Field() = default;
     Field(
         const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, 
         std::function<std::unique_ptr<FieldOutput>()> current_outputs, 

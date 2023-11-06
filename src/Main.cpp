@@ -6,12 +6,20 @@
 #include <algorithm>
 #include <math.h> 
 
+#include<atomic>
+#include<mutex>
+
+#include<vector>
+#include <thread>
+
+#include<type_traits>
+#include<sstream>
+#include<bit>
+
 #include "Misc.h"
 #include "Vector.h"
 
 #include "Grid.h"
-
-#include <thread>
 
 #include"Timer.h"
 #include"AutoTimer.h"
@@ -21,12 +29,8 @@
 
 #include"ShaderLoader.h"
 
-#include<atomic>
-#include<mutex>
+#include"GridValidation.hpp"
 
-#include<vector>
-
-#include<type_traits>
 
 const uint32_t counterSampleSize = 200;
 UMedianCounter 
@@ -85,7 +89,7 @@ PaintMode paintMode = PaintMode::NONE;
 vec2d mousePos(0), pmousePos(0, 0);
 
 std::chrono::steady_clock::time_point lastGridUpdateTime;
-uint32_t gridUpdatesPerSecond = 5;
+uint32_t gridUpdatesPerSecond = 15;
 
 std::chrono::steady_clock::time_point curTime;
 float r1 = 1; //w key not pressed
@@ -93,6 +97,8 @@ float r2 = 0; //normalized mouseX
 
 
 GLuint frameBuffer, frameBufferTexture;
+
+static GridValidation  gridValidation;
 
 
 std::chrono::steady_clock::time_point lastScreenUpdateTime;
@@ -362,6 +368,8 @@ void updateState() {
         Timer<> t{};
         fieldUpdateWait.add(t.elapsedTime());
         isBufferSecond = !isBufferSecond;
+        gridValidation.writeIf(100);
+        gridValidation.validateIf(100);
         grid->startNewGeneration();
     }
 
@@ -522,9 +530,6 @@ int main() {
 
     glUseProgram(mainProg);
 
-    siv::PerlinNoise noise{};
-    std::srand(2474941956);
-
     glGenBuffers(1, &packedGrid1);
     glGenBuffers(1, &packedGrid2);
     
@@ -553,6 +558,7 @@ int main() {
     field_size_bytes = grid->size_bytes();
     
     //{
+    //siv::PerlinNoise noise{};
     //    AutoTimer<> t{ "set" };
     //    for (size_t i = 0; i < gridSize; i++) {
     //        const double freq = 0.05;
@@ -562,19 +568,26 @@ int main() {
     //    }
     //}
 
+    auto const seed = 438209;
+
     {
-        auto* const rawData = grid->rawData();
-        for (size_t i = 0; i < field_size_bytes / 4; i++) {
-            uint32_t cells{ 0 };
-            for (unsigned j{ 0 }; j < 2; ++j) {
-                cells = (cells << 16) | std::rand() % 32767u;
-                static_assert(32767u == 0x7fff, "");
-            }
-            rawData[i] = cells;
+        std::mt19937 gen{ seed };
+        std::uniform_int_distribution<uint32_t> dis{};
+
+        auto const rawData = grid->rawData();
+        auto const size = grid->size();
+        for (size_t i = 0; i < size; i++) {
+            rawData[i] = dis(gen) & ~dis(gen);
         }
     }
 
+
     gridUpdate = false;
+
+    gridValidation = GridValidation{ grid.get(), seed, -1, false };
+    gridValidation.writeIf(0);
+    gridValidation.validateIf(0);
+
     grid->startCurGeneration();
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, packedGrid1);
