@@ -57,6 +57,15 @@ namespace misc {
         return mod;
     }
 
+    inline constexpr int64_t mod(const int64_t x, const int64_t y) noexcept {
+        int64_t mod = x % y;
+        // if the signs are different and modulo not zero, adjust result
+        if ((x ^ y) < 0 && mod != 0) {
+            mod += y;
+        }
+        return mod;
+    }
+
     inline constexpr uint32_t umod(const uint32_t x, const uint32_t y) noexcept {
         return x % y;
     }
@@ -97,6 +106,17 @@ namespace misc {
 
     inline constexpr int32_t intDivFloor(int32_t number, int32_t round) {
         return roundDownIntTo(number, round) / round;
+    }
+
+    inline constexpr int64_t roundDownLongTo(int64_t number, int64_t round) {
+        const auto remainder = misc::mod(number, round);
+        const auto result = number - remainder;
+        assert((result % round == 0) || (result <= number));
+        return result;
+    }
+
+    inline constexpr int64_t longDivFloor(int64_t number, int64_t round) {
+        return roundDownLongTo(number, round) / round;
     }
 
     template<class T>

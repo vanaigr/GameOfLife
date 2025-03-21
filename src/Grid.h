@@ -45,7 +45,7 @@ struct FieldOutput { //TODO: remove
 
 struct Cell {
     FieldCell cell;
-    int32_t index;
+    int64_t index;
 };
 
 class Field final {
@@ -90,15 +90,15 @@ public:
 
     vec2i indexAsCoord(const int32_t index) const;
 
-    int32_t coordAsIndex(const vec2i& coord) const;
-    int32_t coordAsIndex(const int32_t column, const int32_t row) const;
-    
-    int32_t normalizeIndex(const int32_t index) const;
+    int64_t coordAsIndex(const vec2i& coord) const;
+    int64_t coordAsIndex(const int32_t column, const int32_t row) const;
+
+    int64_t normalizeIndex(const int64_t index) const;
     vec2i normalizeCoord(const vec2i& coord) const;
 
     uint32_t width() const;
     uint32_t height() const;
-    uint32_t size() const;
+    int64_t size() const;
 
     uint32_t size_bytes() const;
     //uint32_t size_actual() const;
@@ -128,17 +128,17 @@ inline vec2i Field::indexAsCoord(const int32_t index) const {
     return vec2i(x, y);
 }
 
-inline int32_t Field::coordAsIndex(const vec2i& coord) const {
+inline int64_t Field::coordAsIndex(const vec2i& coord) const {
     const auto coord_n = normalizeCoord(coord);
-    return coord_n.x + coord_n.y * width();
+    return (int64_t)coord_n.x + (int64_t)coord_n.y * (int64_t)width();
 }
 
-inline int32_t Field::coordAsIndex(const int32_t column, const int32_t row) const {
+inline int64_t Field::coordAsIndex(const int32_t column, const int32_t row) const {
     return coordAsIndex(vec2i(column, row));
 }
 
-inline int32_t Field::normalizeIndex(const int32_t index) const {
-    return misc::mod(index, static_cast<int32_t>(size()));
+inline int64_t Field::normalizeIndex(const int64_t index) const {
+    return misc::mod(index, static_cast<int64_t>(size()));
 }
 inline vec2i Field::normalizeCoord(const vec2i& coord) const {
     return vec2i(misc::mod(coord.x, width()), misc::mod(coord.y, height()));

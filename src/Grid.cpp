@@ -102,10 +102,10 @@ public:
         std::fill(&grid[0], &grid[0] + bufferLength(), val);
     }
 
-    uint8_t cellAt_grid(int32_t const index, BufferType const type = bufCur) const {
+    uint8_t cellAt_grid(int64_t const index, BufferType const type = bufCur) const {
         auto grid = getBuffer(type);
-        const auto row = misc::intDivFloor(index, width);
-        const auto col = misc::mod(index, width);
+        const auto row = misc::longDivFloor(index, width);
+        const auto col = misc::mod(index, (int64_t)width);
 
         const auto col_int = col / cellsBatchLength;
         const auto shift = col % cellsBatchLength;
@@ -113,16 +113,16 @@ public:
         return (grid[bufferPaddingLength() + row * rowLength + col_int] >> shift) & 0b1;
     }
 
-    void setCellAt(int32_t const index, FieldCell const cell, BufferType const type = bufCur) {
+    void setCellAt(int64_t const index, FieldCell const cell, BufferType const type = bufCur) {
         auto grid = getBuffer(type);
 
-        const auto row = misc::intDivFloor(index, int32_t(width));
-        const auto col = misc::mod(index, width);
+        const auto row = misc::longDivFloor(int64_t(index), int64_t(width));
+        const auto col = misc::mod((int64_t)index, (int64_t)width);
 
         const auto col_int = col / cellsBatchLength;
         const auto shift = col % cellsBatchLength;
 
-        auto& cur{ grid[bufferPaddingLength() + row * rowLength + col_int] };
+        auto& cur{ grid[(int64_t)bufferPaddingLength() + row * (int64_t)rowLength + col_int] };
 
         cur = (cur & ~(0b1u << shift)) | (static_cast<uint32_t>(cell) << shift);
     }
@@ -131,9 +131,9 @@ public:
         return getBuffer(type)[index_actual_int + bufferPaddingLength()];
     }
 
-    uint32_t cellI2BatchI(const uint32_t index) const {
-        const auto row = misc::intDivFloor(index, width);
-        const auto col = misc::mod(index, width);
+    uint32_t cellI2BatchI(int64_t index) const {
+        const auto row = misc::longDivFloor(index, width);
+        const auto col = misc::mod(index, (int64_t)width);
 
         const auto col_int = col / cellsBatchLength;
 
@@ -149,9 +149,9 @@ public:
     }
     uint32_t bufferPaddingLength() const {
         return rowLength + 1/*
-            extra row before/after the grid repeating the opposite row 
+            extra row before/after the grid repeating the opposite row
             and 1 cell on each side for the first/last cell's neighbour,
-            padding after can be 1 shorter but not when width % batchSize, 
+            padding after can be 1 shorter but not when width % batchSize,
             so it is +1 always for consistency
         */;
     }
