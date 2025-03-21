@@ -4,7 +4,7 @@
 #include <iostream>
 #include <chrono>
 #include <algorithm>
-#include <math.h> 
+#include <math.h>
 
 #include "Misc.h"
 #include "Vector.h"
@@ -29,13 +29,13 @@
 #include<type_traits>
 
 const uint32_t counterSampleSize = 200;
-UMedianCounter 
-    set{ counterSampleSize }, 
-    bufferSet{ counterSampleSize }, 
-    draw{ counterSampleSize }, 
+UMedianCounter
+    set{ counterSampleSize },
+    bufferSet{ counterSampleSize },
+    draw{ counterSampleSize },
     postProcessing{ counterSampleSize },
-    swap{ counterSampleSize }, 
-    update{ counterSampleSize }, 
+    swap{ counterSampleSize },
+    update{ counterSampleSize },
     fieldUpdateWait{ counterSampleSize };
 
 UMedianCounter microsecPerFrame{ counterSampleSize };
@@ -110,7 +110,7 @@ static std::mutex gpuBufferLock{ };
 void printMouseCellInfo();
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) noexcept {
-    
+
     if (action == GLFW_PRESS && key == GLFW_KEY_TAB) { //debug info
         const auto printC = [](const std::string label, const UMedianCounter& counter) {
             std::cout << label << '=' << counter.median()  << ", max=" << counter.max() << std::endl;
@@ -132,6 +132,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         printMouseCellInfo();
     }
     if (key == GLFW_KEY_ESCAPE) {
+        grid->halt();
         exit(0);
     }
     if (key == GLFW_KEY_W && action == GLFW_PRESS) r1 = 0;
@@ -172,7 +173,7 @@ static void updateWinSize(int const width, int const height) {
     w.windowSizeD = winSizeD;
     w.winSizeH = winSizeD * 0.5;
     w.normalizeCoeff = 1.0 / winSizeD.y;
-    w.lensDistortionCoeff = 1.0/w.winSizeH.length() * lensDistortion; 
+    w.lensDistortionCoeff = 1.0/w.winSizeH.length() * lensDistortion;
 
     winSize = w;
 }
@@ -203,9 +204,9 @@ static vec2d mouseToGlobal() {
 }
 
 vec2i globalAsCell(vec2d coord) {
-    return vec2{ 
-        int(misc::modf(coord.x, gridWidth)), 
-        int(misc::modf(coord.y, gridHeight)) 
+    return vec2{
+        int(misc::modf(coord.x, gridWidth)),
+        int(misc::modf(coord.y, gridHeight))
     };
 }
 
@@ -215,7 +216,7 @@ void printMouseCellInfo() {
     const auto mouseCell = grid->cellAtCoord(mouseCellCoord);
 
     printf(
-        "mouse is at (%d; %d), index=%d (%d mod 16), cell:%s (%d)" "\n",
+        "mouse is at (%d; %d), index=%lld (%lld mod 16), cell:%s (%d)" "\n",
         mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), int(mouseCell)
     );
 
@@ -262,16 +263,24 @@ void window_size_callback(GLFWwindow* window, int width, int height) noexcept {
 
 class GLFieldOutput final : public FieldOutput {
     class GLBufferedFieldOutput final : public FieldOutput {
+        static void writeModification(FieldModification fm) {
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                fm.startIndex_int * sizeOfBatch
+                , fm.size_int * sizeOfBatch
+                , fm.data);
+        }
+
         class InnerFieldOutput final : public FieldOutput {
         public:
             InnerFieldOutput() = default;
 
             virtual void write(FieldModification fm) override {
-                glBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                    fm.startIndex_int * sizeOfBatch 
-                    , fm.size_int * sizeOfBatch
-                    , fm.data);
+                writeModification(fm);
+            }
 
+            virtual std::unique_ptr<FieldOutput> tryBatched() const override
+            {
+                return std::unique_ptr<InnerFieldOutput>(new InnerFieldOutput());
             }
 
             virtual std::unique_ptr<FieldOutput> batched() const override
@@ -289,7 +298,10 @@ class GLFieldOutput final : public FieldOutput {
             to convert from batches to bytes
         */
     public:
-        GLBufferedFieldOutput(GLFieldOutput const& parent_) : parent{ parent_ }, lock{ gpuBufferLock } {
+        GLBufferedFieldOutput(
+            GLFieldOutput const& parent_,
+            std::unique_lock<std::mutex> _lock
+        ) : parent{ parent_ }, lock(std::move(_lock)) {
             if (!glfwGetCurrentContext()) glfwMakeContextCurrent(parent.context);
 
             GLuint fieldBufferHandle;// { !isBufferSecond ^ parent.isBuffer ? packedGrid1 : packedGrid2 };
@@ -307,6 +319,15 @@ class GLFieldOutput final : public FieldOutput {
         GLBufferedFieldOutput(GLBufferedFieldOutput const&) = delete;
         GLBufferedFieldOutput& operator=(GLBufferedFieldOutput const&) = delete;
 
+        virtual void write(FieldModification fm) override {
+            writeModification(fm);
+        }
+
+        // TODO: unsafe. What if it outlives us?
+        virtual std::unique_ptr<FieldOutput> tryBatched() const override
+        {
+            return std::unique_ptr<InnerFieldOutput>(new InnerFieldOutput());
+        }
         virtual std::unique_ptr<FieldOutput> batched() const override
         {
             return std::unique_ptr<InnerFieldOutput>(new InnerFieldOutput());
@@ -334,8 +355,16 @@ public:
     GLFieldOutput(GLFieldOutput const&) = delete;
     GLFieldOutput& operator=(GLFieldOutput const&) = delete;
 
+    std::unique_ptr<FieldOutput> tryBatched() const override {
+        std::unique_lock<std::mutex> lock{ gpuBufferLock, std::try_to_lock_t{} };
+        if(!lock.owns_lock()) return std::unique_ptr<FieldOutput>{};
+
+        return std::unique_ptr<FieldOutput>(new GLBufferedFieldOutput{ *this, std::move(lock) });
+    }
+
     std::unique_ptr<FieldOutput> batched() const override {
-        return std::unique_ptr<FieldOutput>(new GLBufferedFieldOutput{ *this });
+        std::unique_lock<std::mutex> lock{ gpuBufferLock };
+        return std::unique_ptr<FieldOutput>(new GLBufferedFieldOutput{ *this, std::move(lock) });
     }
 
     ~GLFieldOutput() override {
@@ -378,7 +407,7 @@ void updateState() {
                 const auto coord = cell + offset;
 
                 cells.push_back(
-                    Cell{ 
+                    Cell{
                         paintMode == PaintMode::PAINT ? fieldCell::cellAlive : fieldCell::cellDead,
                         grid->coordAsIndex(cell + offset)
                     }
@@ -396,7 +425,7 @@ void updateState() {
         grid->setCells(&cells[0], size);
     }
 
-    auto const vpSizeDesired = getVpSizeDesired(); 
+    auto const vpSizeDesired = getVpSizeDesired();
 
     const auto screenUpdateElapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - lastScreenUpdateTime).count();
     lastScreenUpdateTime = curTime;
@@ -412,7 +441,13 @@ void updateState() {
         auto const pivot = mouseToGlobal();
         space.vpPosDesired = pivot + (space.vpPos - pivot) / space.vpSize * vpSizeDesired;
 
+        // reset current zoom position to avoid bleed from previous zoom position which can be far away.
+        auto diff = zoomPoint - desiredZoomPoint;
+        auto resetCurrent = diff.dot(diff) < 1;
+
         desiredZoomPoint = mousePos;
+        if(resetCurrent) zoomPoint = desiredZoomPoint;
+
         isZoomChanged = false;
     }
 
@@ -453,9 +488,9 @@ struct BufferData {
     }
 };
 
-void APIENTRY glDebugOutput(GLenum source, GLenum type, unsigned int id, GLenum severity, 
+void APIENTRY glDebugOutput(GLenum source, GLenum type, unsigned int id, GLenum severity,
                             GLsizei length, const char *message, const void *userParam) {
-    if(id == 131169 || id == 131185 || id == 131218 || id == 131204) return; 
+    if(id == 131169 || id == 131185 || id == 131218 || id == 131204) return;
     std::cout << message << '\n';
 }
 
@@ -492,11 +527,11 @@ int main() {
         return 2;
     }
 
-    int flags; 
+    int flags;
     glGetIntegerv(GL_CONTEXT_FLAGS, &flags);
     if (flags & GL_CONTEXT_FLAG_DEBUG_BIT) {
         glEnable(GL_DEBUG_OUTPUT);
-        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS); 
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
         glDebugMessageCallback(glDebugOutput, nullptr);
         glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
     }
@@ -505,7 +540,7 @@ int main() {
     glfwSetKeyCallback(window, key_callback);
     glfwSetCursorPosCallback(window, cursor_position_callback);
     glfwSetMouseButtonCallback(window, mouse_button_callback);
-    glfwSetScrollCallback(window, scroll_callback); 
+    glfwSetScrollCallback(window, scroll_callback);
     glfwSetWindowSizeCallback(window, window_size_callback);
 
     GLuint mainProg = glCreateProgram();
@@ -527,7 +562,7 @@ int main() {
 
     glGenBuffers(1, &packedGrid1);
     glGenBuffers(1, &packedGrid2);
-    
+
     if(GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         status != GL_FRAMEBUFFER_COMPLETE
     ) {
@@ -546,12 +581,12 @@ int main() {
     const auto bufffff = buffer_outputs();
 
     grid = std::unique_ptr<Field>{ new Field(
-        gridWidth, gridHeight, numberOfTasks, 
+        gridWidth, gridHeight, numberOfTasks,
         current_outputs, buffer_outputs
-    ) };     
+    ) };
 
     field_size_bytes = grid->size_bytes();
-    
+
     //{
     //    AutoTimer<> t{ "set" };
     //    for (size_t i = 0; i < gridSize; i++) {
@@ -670,7 +705,7 @@ int main() {
         {
 
             Timer<> t{};
-            glUniform2f(vpPosP, space.vpPos.x, space.vpPos.y); 
+            glUniform2f(vpPosP, space.vpPos.x, space.vpPos.y);
             glUniform1f(vpSizeP, space.vpSize);
 
             glUniform2f(mousePosP, mousePos.x, mousePos.y);

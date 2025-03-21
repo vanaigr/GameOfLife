@@ -10,6 +10,7 @@
 #include <atomic>
 #include <vector>
 #include"MedianCounter.h"
+#include<unordered_set>
 #include<functional>
 
 using FieldCell = bool;
@@ -39,6 +40,7 @@ struct FieldOutput { //TODO: remove
     }
 
     virtual std::unique_ptr<FieldOutput> batched() const = 0;
+    virtual std::unique_ptr<FieldOutput> tryBatched() const = 0;
     virtual ~FieldOutput() = default;
 }; //must be used as output only in one thread
 
@@ -61,11 +63,11 @@ private:
     const uint32_t numberOfTasks;
     std::unique_ptr<std::unique_ptr<Task<GridData>>[/*numberOfTasks*/]> gridTasks;
     std::atomic_bool interrupt_flag;
-    std::vector<uint32_t> indecesToBrokenCells;
+    std::unordered_set<uint32_t> indecesToBrokenCells;
 public:
     Field(
-        const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_, 
-        std::function<std::unique_ptr<FieldOutput>()> current_outputs, 
+        const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_,
+        std::function<std::unique_ptr<FieldOutput>()> current_outputs,
         std::function<std::unique_ptr<FieldOutput>()> buffer_outputs
     );
     ~Field();
@@ -104,6 +106,8 @@ public:
     //uint32_t size_actual() const;
     uint32_t width_actual() const;
     uint32_t *rawData() const;
+
+    void halt();
 private:
     void waitForGridTasks();
     void deployGridTasks();
