@@ -5,13 +5,13 @@
 #include"Grid.h"
 #include<vector>
 
-#include<cassert> 
+#include<cassert>
 
 #include"Timer.h"
 #include"AutoTimer.h"
 #include"MedianCounter.h"
 
-#include<nmmintrin.h> 
+#include<nmmintrin.h>
 
 #include<algorithm>
 
@@ -31,16 +31,15 @@ struct Field::FieldPimpl {
     int32_t width;
     int32_t height;
     int32_t rowLength;
-    bool edgeCellsOptimization;
     bool buffersSwapped;
-
 
 public:
     FieldPimpl(const int32_t gridWidth, const int32_t gridHeight) {
         width = gridWidth;
         height = gridHeight;
         rowLength = misc::intDivCeil(width, cellsBatchLength);
-        edgeCellsOptimization = rowLength * cellsBatchLength - width >= 2; 
+        // edge cell optimization
+        if(rowLength * cellsBatchLength - width < 2) rowLength++;
 
         auto const bufferLen = bufferLength();
         auto const paddingLen = bufferPaddingLength();
@@ -60,9 +59,9 @@ public:
 
         //order is important as if there can be only one row,
         //in which case this algorithm *should* still work:
-        //side neightbours algorithm requires one extra row ahead, which 
-        //we get as the end padding IS the next row. then we fix 
-        //the side neightbours for start and end padding and copy 
+        //side neightbours algorithm requires one extra row ahead, which
+        //we get as the end padding IS the next row. then we fix
+        //the side neightbours for start and end padding and copy
         //start padding (not from -1 but from 0, as -1 can be outside the grid)
 
         auto const startPaddingRow = buffer - rowLength;
@@ -72,7 +71,7 @@ public:
         std::memcpy(endPaddingRow, buffer, rowSize);
 
         //copy left/right neighbours to other side
-        if(edgeCellsOptimization) {
+        {
             for(int32_t row = 0; row != height; row++) {
                 auto const rowOffset = row * rowLength;
 
@@ -364,103 +363,6 @@ static void threadUpdateGrid(Field::GridData& data) {
 
     if (data.interrupt_flag.load()) return;
 
-
-    if (grid.edgeCellsOptimization == false) {
-        auto const setBufferCellAt = [&grid](uint32_t index, FieldCell cell) -> void { grid.setCellAt(index, cell, Field::FieldPimpl::bufNext); };
-
-        auto const fullWidth = grid.rowLength * cellsBatchLength;
-        uint32_t const height = grid.height;
-        int32_t  const lastElement = width_grid - 1;
-
-        const uint32_t startRow = startIndex / fullWidth;
-        const uint32_t endRow = misc::min<uint32_t>(misc::intDivCeil(endIndex + 1, fullWidth), height);
-
-        const auto isCell = [&grid](int32_t index) -> uint8_t {
-            return grid.cellAt_grid(index);
-        };
-        const auto cellAt = [&grid](int32_t index) -> FieldCell {
-            return grid.cellAt_grid(index);
-        };
-
-        {
-            const int32_t row = startRow * width_grid;
-
-            uint8_t //top/cur/bot + first/second/last
-                tf = isCell(row + -width_grid),
-                ts = isCell(row + -width_grid + 1),
-                tl = isCell(row + -width_grid + lastElement),
-                cf = isCell(row + 0),
-                cs = isCell(row + 1),
-                cl = isCell(row + lastElement);
-
-            for (uint32_t rowIndex = startRow; rowIndex < endRow; rowIndex++) {
-                const int32_t row = rowIndex * width_grid;
-
-                uint8_t
-                    bf = isCell(row + width_grid),
-                    bs = isCell(row + width_grid + 1),
-                    bl = isCell(row + width_grid + lastElement);
-                //first element
-                {
-                    const int index = row;
-                    const auto curCell = cellAt(index);
-                    const unsigned char    topRowNeighbours = tf + ts + tl;
-                    const unsigned char bottomRowNeighbours = bf + bs + bl;
-                    const unsigned char aliveNeighbours = topRowNeighbours + cl + cs + bottomRowNeighbours;
-
-                    setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-                }
-
-                tf = cf;
-                ts = cs;
-                tl = cl;
-                cf = bf;
-                cs = bs;
-                cl = bl;
-            }
-        }
-        if (data.interrupt_flag.load()) return;
-
-        {
-            const int32_t row = startRow * width_grid;
-
-            uint8_t //top/cur/bot + first/last/pre-last
-                tf = isCell(row + -width_grid),
-                tl = isCell(row + -width_grid + lastElement),
-                tp = isCell(row + -width_grid + lastElement - 1),
-                cf = isCell(row + 0),
-                cl = isCell(row + lastElement),
-                cp = isCell(row + lastElement - 1);
-
-            for (uint32_t rowIndex = startRow; rowIndex < endRow; rowIndex++) {
-                const int32_t row = rowIndex * width_grid;
-
-                uint8_t
-                    bf = isCell(row + width_grid),
-                    bp = isCell(row + width_grid + lastElement - 1),
-                    bl = isCell(row + width_grid + lastElement);
-
-                { //last element
-                    const int index = row + lastElement;
-                    const auto curCell = cellAt(index);
-                    const uint8_t    topRowNeighbours = tp + tl + tf;
-                    const uint8_t bottomRowNeighbours = bp + bl + bf;
-                    const uint8_t     aliveNeighbours = topRowNeighbours + cp + cf + bottomRowNeighbours;
-
-                    setBufferCellAt(index, fieldCell::nextGeneration(curCell, aliveNeighbours));
-                }
-
-                tf = cf;
-                tp = cp;
-                tl = cl;
-                cf = bf;
-                cp = bp;
-                cl = bl;
-            }
-        }
-        if (data.interrupt_flag.load()) return;
-    }
-
     data.gridUpdate.add(t.elapsedTime());
 
     Timer<> t2{};
@@ -705,42 +607,19 @@ bool Field::tryFinishGeneration() {
         int32_t width_grid = field.width;
         auto const buffer = field.getBuffer(Field::FieldPimpl::bufCur) + field.bufferPaddingLength();
         for (uint32_t index_actual_int : repairedCells_actual_int) {
-            bool const isEdgeOpt = gridPimpl->edgeCellsOptimization;
 
             auto const colIndex = int(index_actual_int % rowLen);
-            auto const specialFirstCell = !isEdgeOpt && (colIndex == 0);
-            auto const specialLastCell = !isEdgeOpt && (colIndex == rowLen - 1);
 
-            auto previousRemainder = ([&]() -> Remainder {
-                    if(specialFirstCell) return {} /* we don't need to fill the remainder as it affects only the first two cells in the batch, one of them is from the previous row, and the second one is recalculated later*/;
-                    else return calcRemainder(field, index_actual_int);
-            })();
-
+            auto previousRemainder = calcRemainder(field, index_actual_int);
             uint64_t newGenerationWindow = newGenerationBatched(previousRemainder, buffer + index_actual_int, rowLen, previousRemainder);
 
-
-            if(specialLastCell) {
-                newGenerationWindow = (newGenerationWindow >> 1);
-            }
-            else {
-                newGenerationWindow =
-                    (newGenerationWindow >> 1) |
-                    (uint64_t(newGenerationBatched(previousRemainder, buffer + index_actual_int + 1, rowLen, previousRemainder)) << (cellsBatchLength - 1));
-            }
+            newGenerationWindow =
+                (newGenerationWindow >> 1) |
+                (uint64_t(newGenerationBatched(previousRemainder, buffer + index_actual_int + 1, rowLen, previousRemainder)) << (cellsBatchLength - 1));
 
             uint32_t newGeneration = static_cast<uint32_t>(newGenerationWindow);
 
             auto const startRowCellIndex = index_actual_int / rowLen * width_grid;
-            if(specialFirstCell) {
-                newGeneration = (newGeneration & ~uint32_t(1)) | (updatedCell(startRowCellIndex, gridPimpl));
-            }
-
-            if(specialLastCell) {
-                const auto lastCellCol = misc::mod(field.width-1, cellsBatchLength);
-                newGeneration = (newGeneration & ~(uint32_t(1) << lastCellCol)) 
-                    | (uint32_t(updatedCell(startRowCellIndex + field.width - 1, gridPimpl)) << lastCellCol);
-            }
-
 
             gridPimpl->getCellsActual_int(index_actual_int, Field::FieldPimpl::bufNext) = newGeneration;
             output->write(FieldModification{ index_actual_int, 1, &newGeneration });
