@@ -161,7 +161,7 @@ public:
 };
 
 struct Field::GridData {
-private: static const uint32_t samples = 100;
+private: static const uint32_t samples = 30;
 public:
     UMedianCounter gridUpdate{ samples }, bufferSend{ samples };
     uint32_t task__iteration;
@@ -176,9 +176,9 @@ public:
     void generationUpdated() {
         task__iteration++;
         if (task__iteration % (samples + task__index) == 0)
-            std::cout << "grid task " << task__index << ": "
-            << gridUpdate.median() << ' '
-            << bufferSend.median() << std::endl;
+            std::cout << "grid task " << task__index << ": total - "
+            << (gridUpdate.median() / 1000) << "ms"
+            << " (sending - " << (bufferSend.median() / 1000) << "ms)" << std::endl;
     }
 
 public:
@@ -224,11 +224,11 @@ static uint32_t newGenerationBatched(
         auto const numberDupBytes = _mm_unpacklo_epi8(numberReg, numberReg);
 
         auto const numQuadrupleLowBytes = _mm_shufflelo_epi16(numberDupBytes, 0b01'01'00'00);
-        auto const numberLowHalf = _mm_shuffle_epi32(numQuadrupleLowBytes, 0b01'01'00'00); 
+        auto const numberLowHalf = _mm_shuffle_epi32(numQuadrupleLowBytes, 0b01'01'00'00);
         auto const isLowCell = _mm_cmpeq_epi8(_mm_and_si128(numberLowHalf, cellPosForByteMask), cellPosForByteMask);
 
         auto const numQuadrupleHighBytes = _mm_shufflelo_epi16(numberDupBytes, 0b11'11'10'10);
-        auto const numberHighHalf = _mm_shuffle_epi32(numQuadrupleHighBytes, 0b01'01'00'00); 
+        auto const numberHighHalf = _mm_shuffle_epi32(numQuadrupleHighBytes, 0b01'01'00'00);
         auto const isHighCell = _mm_cmpeq_epi8(_mm_and_si128(numberHighHalf, cellPosForByteMask), cellPosForByteMask);
 
         return _mm_sub_epi8(_mm_and_si128(isHighCell, _mm_set1_epi8(0b0001'0000)), isLowCell)/*
@@ -254,7 +254,7 @@ static uint32_t newGenerationBatched(
 
     //using _or instead of _add because .curCell is in lower 4 bits and carry is in higher 4
     auto const curRowCentered = _mm_or_si128(
-        _mm_alignr_epi8(curBatch, curRowCentered_carry, 15), 
+        _mm_alignr_epi8(curBatch, curRowCentered_carry, 15),
         _mm_cvtsi32_si128(previousRemainder.curCell)
     );
     auto const cells3by3 = _mm_add_epi8(
@@ -333,7 +333,30 @@ static void threadUpdateGrid(Field::GridData& data) {
     auto const buffer = grid.getBuffer(Field::FieldPimpl::bufCur) + grid.bufferPaddingLength();
     auto const rowLen = grid.rowLength;
 
-    if (i < endBatch + 1) {
+    auto lastSyncI = i;
+    auto const sendBatchCount = 16384;
+    int32_t totalElapsed = 0;
+    auto const sync = [&](bool force = false) {
+        auto endI = i - 1;
+        if(!force && lastSyncI + sendBatchCount > endI) return;
+
+        std::unique_ptr<FieldOutput> output;
+        if(force) output = data.buffer_output->batched();
+        else output = data.buffer_output->tryBatched();
+
+        if(output) {
+            Timer<> t2{};
+            output->write(FieldModification{
+                uint32_t(lastSyncI),
+                uint32_t(endI - lastSyncI),
+                &grid.getCellsActual_int(lastSyncI, Field::FieldPimpl::bufNext),
+            });
+            totalElapsed += t2.elapsedTime();
+            lastSyncI = endI;
+        }
+    };
+
+    if (i < endBatch) {
         auto const newGen = newGenerationBatched(previousRemainder, buffer + i, rowLen, previousRemainder/*out param*/);
 
         newGenWindow = (uint64_t(newGen) << 31);
@@ -341,7 +364,8 @@ static void threadUpdateGrid(Field::GridData& data) {
         ++i;
     }
 
-    for (auto const j_count = 32; (i + j_count) < endBatch + 1;) {
+    auto const j_count = 128;
+    for (; (i + j_count) < endBatch + 1;) {
         for (uint32_t j = 0; j < j_count; ++j, ++i) {
             auto const newGen = newGenerationBatched(previousRemainder, buffer + i, rowLen, previousRemainder/*out param*/);
 
@@ -352,6 +376,7 @@ static void threadUpdateGrid(Field::GridData& data) {
         }
 
         if (data.interrupt_flag.load()) return;
+        sync();
     }
 
     for (; i < endBatch + 1; ++i) {
@@ -363,13 +388,9 @@ static void threadUpdateGrid(Field::GridData& data) {
 
     if (data.interrupt_flag.load()) return;
 
+    sync(true);
     data.gridUpdate.add(t.elapsedTime());
-
-    Timer<> t2{};
-     
-    data.buffer_output->write(FieldModification{ data.startBatch, data.endBatch - data.startBatch, &grid.getCellsActual_int(startBatch, Field::FieldPimpl::bufNext) });
-
-    data.bufferSend.add(t2.elapsedTime());
+    data.bufferSend.add(totalElapsed);
 
     const uint32_t j = 1 << (data.task__iteration % (((grid.width-1) % 32) + 1));
     const uint32_t zero = 0;
@@ -398,7 +419,7 @@ uint32_t* Field::rawData() const {
 
 Field::Field(
     const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_,
-    std::function<std::unique_ptr<FieldOutput>()> current_outputs, 
+    std::function<std::unique_ptr<FieldOutput>()> current_outputs,
     std::function<std::unique_ptr<FieldOutput>()> buffer_outputs
 ) :
     gridPimpl{ new FieldPimpl(gridWidth, gridHeight) },
@@ -408,34 +429,9 @@ Field::Field(
     numberOfTasks(numberOfTasks_),
     gridTasks{ new std::unique_ptr<Task<GridData>>[numberOfTasks_] },
     interrupt_flag{ false },
-    indecesToBrokenCells{ }
+    indecesToBrokenCells{}
 {
     assert(numberOfTasks >= 1);
-
-    //grid update == 50 ms, buffer send == 4 ms.In my case
-    //4 / 50 ~= 1 / 20 
-    const double fraction = .05; // fractionOfWorkTimeToSendData
-    static_assert(true, ""/*
-    find amountOfWorkT1. given fraction, workload (total batches)
-    amountOfWorkT1 - percent of work;
-
-    timeForTask1 = amountOfWorkT1 + amountOfWorkT1 * fraction;
-    timeForTask2 = timeForTask1 + timeForTask1 * fraction;
-    timeForTask3 = timeForTask2 + timeForTask2 * fraction;
-    ...
-
-                                                                v  total time
-    timeForTask1 + timeForTask2 + timeForTask3 + ... = workload * (1.0 + fraction);
-    amountOfWorkT1 * (1.0 + fraction)
-        + (amountOfWorkT1 * (1.0 + fraction)) * (1.0  + fraction)
-        + ...                                                       = workload * (1.0 + fraction);
-    amountOfWorkT1 * (1.0 + fraction) + amountOfWorkT1 * (1.0  + fraction)^2 + ...  + amountOfWorkT1 * (1.0  + fraction)^numberOfTasks = workload * (1.0 + fraction);
-
-    amountOfWorkT1 * ((1.0 + fraction) + (1.0  + fraction)^2 + ... + (1.0  + fraction)^numberOfTasks) = workload * (1.0 + fraction);
-
-    amountOfWorkT1 = workload / ( ( (1.0 + fraction)^numberOfTasks - 1 ) / fraction );
-    amountOfWorkT1 = workload /   ( (1.0 + fraction)^numberOfTasks - 1 ) * fraction  ;
-    */);
 
     const auto createGridTask = [this, &buffer_outputs](const uint32_t index, const uint32_t startBatch, const uint32_t endBatch) -> void {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -443,45 +439,28 @@ Field::Field(
         gridTasks.get()[index] = std::unique_ptr<Task<GridData>>(
             new Task<GridData>{
                 threadUpdateGrid,
-                
+
                 index,
                 this->gridPimpl,
                 this->interrupt_flag,
                 startBatch,
                 endBatch,
-                buffer_outputs() //getting output    
+                buffer_outputs() //getting output
             }
         );
     };
 
-    uint32_t batchesBefore = 0;
-    uint32_t remainingBatches = gridPimpl->gridLength();
+    uint32_t const totalBatches = gridPimpl->gridLength();
+    const uint32_t numberOfBatches = totalBatches / numberOfTasks;
 
-    const double amountOfWorkT1 = remainingBatches / (pow((1.0 + fraction), numberOfTasks) - 1) * fraction;
-
-    double currentTaskWork = amountOfWorkT1;
-
+    uint32_t curBatches = 0;
     for (uint32_t i = 0; i < numberOfTasks - 1; i++) {
-        const uint32_t numberOfBatches = misc::min(remainingBatches, static_cast<uint32_t>(ceil(currentTaskWork)));
-        ::std::cout << numberOfBatches << std::endl;
-
-        createGridTask(i, batchesBefore, batchesBefore + numberOfBatches);
-
-        batchesBefore += numberOfBatches;
-        remainingBatches -= numberOfBatches;
-
-        currentTaskWork *= (1.0 + fraction);
+        createGridTask(i, curBatches, curBatches + numberOfBatches);
+        curBatches += numberOfBatches;
     }
 
-    {//last
-        const uint32_t numberOfBatches = remainingBatches;
-        ::std::cout << numberOfBatches << std::endl;
-
-        createGridTask(numberOfTasks - 1, batchesBefore, batchesBefore + numberOfBatches);
-
-        batchesBefore += numberOfBatches;
-        remainingBatches -= numberOfBatches;
-    }
+    //last
+    createGridTask(numberOfTasks - 1, curBatches, totalBatches);
 }
 
 
@@ -497,9 +476,14 @@ void Field::fill(const FieldCell cell) {
     indecesToBrokenCells.clear();
 
     current_output->write(FieldModification{ 0, static_cast<uint32_t>(gridPimpl->gridLength()), &gridPimpl->getCellsActual_int(0) });
-    
+
 
     deployGridTasks();
+}
+
+void Field::halt() {
+    interrupt_flag.store(true);
+    waitForGridTasks();
 }
 
 FieldCell Field::cellAtIndex(const uint32_t index) const {
@@ -520,27 +504,25 @@ void Field::setCells(Cell const* const cells, size_t const count) {
     }
     else {
         std::vector<uint32_t> cells_indeces_actual_int{};
-        //std::vector<uint32_t> cells_int{};
 
+        int64_t last_index_actual_int = -1;
         for (size_t i = 0; i < count; ++i) {
             auto const cell = cells[i];
             auto const index = normalizeIndex(cell.index);
             const auto index_actual_int{ gridPimpl->cellI2BatchI(index) };
 
-            if (std::find(
-                cells_indeces_actual_int.begin(), cells_indeces_actual_int.end(),
-                index_actual_int
-            ) == cells_indeces_actual_int.end()) {
-                cells_indeces_actual_int.push_back(index_actual_int);
-            }
-
             gridPimpl->setCellAt(index, cell.cell);
-            indecesToBrokenCells.push_back(index);
+            indecesToBrokenCells.insert(index);
+            if(last_index_actual_int != index_actual_int) {
+                // This can insert the same index twice. Should not matter though
+                cells_indeces_actual_int.push_back(index_actual_int);
+                last_index_actual_int = index_actual_int;
+            }
         }
 
+        auto bo = current_output->batched();
         for (uint32_t index_actual_int : cells_indeces_actual_int) {
-
-            current_output->write(FieldModification{ index_actual_int, 1, &gridPimpl->getCellsActual_int(index_actual_int) });
+            bo->write(FieldModification{ index_actual_int, 1, &gridPimpl->getCellsActual_int(index_actual_int) });
         }
     }
 }
@@ -574,7 +556,8 @@ bool Field::tryFinishGeneration() {
     interrupt_flag.store(false);
 
     if (indecesToBrokenCells.size() > 0) {
-        std::vector<uint32_t> repairedCells_actual_int{};
+        std::unordered_set<uint32_t> repairedCells_actual_int{};
+        int64_t last_actual_int = -1;
 
         for (auto it = indecesToBrokenCells.begin(); it != indecesToBrokenCells.end(); it++) {
             const uint32_t index = *it;
@@ -587,13 +570,10 @@ bool Field::tryFinishGeneration() {
                     auto offsetedIndex = this->coordAsIndex(coord + vec2i(xo, yo));//this->normalizeIndex(index + xo + gridPimpl->width_grid * yo);//x + width() * y;
 
                     const auto index_actual_int{ gridPimpl->cellI2BatchI(offsetedIndex) };
-
-                    if (
-                        std::find(
-                            repairedCells_actual_int.begin(), repairedCells_actual_int.end(), 
-                            index_actual_int
-                        ) == repairedCells_actual_int.end()
-                    ) repairedCells_actual_int.push_back(index_actual_int);
+                    if(last_actual_int != index_actual_int) {
+                        repairedCells_actual_int.insert(index_actual_int);
+                        last_actual_int = index_actual_int;
+                    }
                 }
             }
         }
@@ -663,6 +643,6 @@ uint32_t Field::width() const {
 uint32_t Field::height() const {
     return gridPimpl->height;
 }
-uint32_t Field::size() const {
-    return gridPimpl->width * gridPimpl->height;
+int64_t Field::size() const {
+    return (int64_t)gridPimpl->width * (int64_t)gridPimpl->height;
 }
