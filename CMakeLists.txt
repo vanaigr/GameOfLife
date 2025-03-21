@@ -12,10 +12,11 @@ target_compile_definitions(${GAME_NAME} PRIVATE GLEW_STATIC)
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(
-        ${GAME_NAME} PRIVATE 
+        ${GAME_NAME} PRIVATE
+        -O3
         -msse4.1
 
-        -pedantic -Wall -Wextra -Werror 
+        -pedantic -Wall -Wextra -Werror
 
         -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
         -Wno-unused-but-set-variable -Wno-unused-label -Wno-unused-private-field
