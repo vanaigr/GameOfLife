@@ -5,6 +5,7 @@
 #include <chrono>
 #include <algorithm>
 #include <math.h>
+#include <inttypes.h>
 
 #include "Misc.h"
 #include "Vector.h"
@@ -217,7 +218,7 @@ void printMouseCellInfo() {
     const auto mouseCell = grid->cellAtCoord(mouseCellCoord);
 
     printf(
-        "mouse is at (%d; %d), index=%lld (%lld mod 16), cell:%s (%d)" "\n",
+        "mouse is at (%d; %d), index=%" PRId64 " (%" PRId64 " mod 16), cell:%s (%d)" "\n",
         mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), int(mouseCell)
     );
 

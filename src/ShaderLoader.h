@@ -2,7 +2,7 @@
 
 #include<string>
 #include<memory>
-#include<GLEW/glew.h>
+#include<GL/glew.h>
 
 class ShaderLoader
 {
@@ -27,7 +27,7 @@ public:
 
 inline void ShaderLoader::addScreenSizeTriangleStripVertexShader(const std::string& name) {
     this->addShaderFromCode(
-        "\n#version 300 es"
+        "\n#version 430"
         "\nprecision mediump float;"
         "\nvoid main(void){"
         "\ngl_Position = vec4("
@@ -43,7 +43,7 @@ inline void ShaderLoader::addScreenSizeTriangleStripVertexShader(const std::stri
 }
 inline void ShaderLoader::addScreenCoordFragmentShader(const std::string& name) {
     this->addShaderFromCode(
-        "\n#version 300 es"
+        "\n#version 430"
         "\nprecision mediump float;"
         "\nlayout(origin_upper_left) in vec4 gl_FragCoord;"
         "\nout vec4 color;"

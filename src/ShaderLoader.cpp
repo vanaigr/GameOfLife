@@ -1,5 +1,5 @@
 #include "ShaderLoader.h"
-#include<GLEW/glew.h>
+#include<GL/glew.h>
 #include<vector>
 #include<string>
 #include<iostream>

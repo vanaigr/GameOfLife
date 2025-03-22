@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.28.0)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+set(CMAKE_CXX_COMPILER clang++)
+
 project(GameOfLife)
 
 set(GAME_NAME "game")
@@ -29,7 +31,19 @@ target_compile_features(${GAME_NAME} PUBLIC cxx_std_17)
 file(GLOB_RECURSE GAME_SOURCES "src/*.cpp")
 target_sources(${GAME_NAME} PRIVATE ${GAME_SOURCES})
 
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+find_package(OpenGL REQUIRED)
+find_package(GLEW REQUIRED)
+find_package(glfw3 REQUIRED)
+
+target_link_libraries(${GAME_NAME} OpenGL::GL GLEW::GLEW glfw)
+
+else()
+
 target_link_libraries(${GAME_NAME} "${CMAKE_SOURCE_DIR}/dependencies/libs/GLFW/glfw3.lib")
-target_link_libraries(${GAME_NAME} "${CMAKE_SOURCE_DIR}/dependencies/libs/GLEW/glew32s.lib")
+target_link_libraries(${GAME_NAME} "${CMAKE_SOURCE_DIR}/dependencies/libs/GL/glew32s.lib")
 
 target_link_libraries(${GAME_NAME} opengl32.dll gdi32.dll user32.dll kernel32.dll)
+
+endif()

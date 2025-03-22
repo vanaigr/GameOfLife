@@ -1,9 +1,9 @@
 @echo off
 
 md dependencies\libs\GLFW
-md dependencies\libs\GLEW
+md dependencies\libs\GL
 md dependencies\include\GLFW
-md dependencies\include\GLEW
+md dependencies\include\GL
 md glslang\
 
 echo setting up glfw
@@ -17,8 +17,8 @@ rmdir /s /q glfw-3.3.2.bin.WIN64
 echo settng up glew
 curl -sSL -o glew-2.2.0-win32.zip https://github.com/nigels-com/glew/releases/download/glew-2.2.0/glew-2.2.0-win32.zip
 tar -xf glew-2.2.0-win32.zip
-move glew-2.2.0\lib\Release\x64\glew32s.lib dependencies\libs\GLEW
-move glew-2.2.0\include\GL\glew.h dependencies\include\GLEW
+move glew-2.2.0\lib\Release\x64\glew32s.lib dependencies\libs\GL
+move glew-2.2.0\include\GL\glew.h dependencies\include\GL
 del glew-2.2.0-win32.zip
 rmdir /s /q glew-2.2.0
 

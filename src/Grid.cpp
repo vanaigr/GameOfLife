@@ -6,6 +6,7 @@
 #include<vector>
 
 #include<cassert>
+#include<cstring>
 
 #include"Timer.h"
 #include"AutoTimer.h"

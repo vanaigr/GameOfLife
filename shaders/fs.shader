@@ -38,8 +38,8 @@ uint cellAt(const uint index) {
     const uint arrIndex = index_actual_buffer / 32;
     const uint arrShift = (index_actual_buffer % 32);
     if(is2ndBuffer != 0)
-        return ((packedGrid2.grid[arrIndex]) >> arrShift) & 1;
-    return ((packedGrid1.grid[arrIndex]) >> arrShift) & 1;
+        return ((packedGrid2.grid[arrIndex]) >> arrShift) & 1u;
+    return ((packedGrid1.grid[arrIndex]) >> arrShift) & 1u;
 }
 
 layout(origin_upper_left) in vec4 gl_FragCoord;
