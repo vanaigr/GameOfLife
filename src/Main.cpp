@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <math.h>
 #include <inttypes.h>
+#include <random>
 
 #include "Misc.h"
 #include "Vector.h"
@@ -600,14 +601,12 @@ int main() {
     //}
 
     {
+        std::mt19937 gen(123123);
+        std::uniform_int_distribution<uint32_t> dist{};
+
         auto* const rawData = grid->rawData();
         for (size_t i = 0; i < field_size_bytes / 4; i++) {
-            uint32_t cells{ 0 };
-            for (unsigned j{ 0 }; j < 2; ++j) {
-                cells = (cells << 16) | std::rand() % 32767u;
-                static_assert(32767u == 0x7fff, "");
-            }
-            rawData[i] = cells;
+            rawData[i] = dist(gen);
         }
     }
 
