@@ -51,7 +51,7 @@ vec2 distortedScreenToGlobal(const vec2 coord) {
 
 ivec2 globalAsCell(const vec2 coord) {
     return ivec2(
-        int(mod(coord.x, gridWidth )), 
+        int(mod(coord.x, gridWidth )),
         int(mod(coord.y, gridHeight))
     );
 }
@@ -78,7 +78,7 @@ vec3 colorForCoords(const vec2 screenCoords) {
     const uint index = cellX + gridWidth * cellY;
 
     float edgeMask = 0;
-    if (cellX == 0 || cellX == gridWidth - 1 || cellY == 0 || cellY == gridHeight - 1) edgeMask = .5;
+    //if (cellX == 0 || cellX == gridWidth - 1 || cellY == 0 || cellY == gridHeight - 1) edgeMask = .5;
 
     const uint mask = cellAt(index);
 
@@ -89,8 +89,8 @@ vec3 colorForCoords(const vec2 screenCoords) {
     const float dx = mod(global.x, 1.0);
     const float dy = mod(global.y, 1.0);
     const float padding = 1 / 15.0;
-    const bool isPadding = (dx < padding || dx > 1 - padding) || (dy < padding || dy > 1 - padding);
-    
+    const bool isPadding = false; //(dx < padding || dx > 1 - padding) || (dy < padding || dy > 1 - padding);
+
 
     const vec3 cell = float(isCell) * float(!isPadding) * cellColor;
     const vec3 bkg = float(isNothing) * bkgColor;

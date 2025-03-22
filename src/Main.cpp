@@ -62,14 +62,14 @@ static double dVpSizeDesired, dVpSize;
 vec2d desiredZoomPoint, zoomPoint; //TODO: init
 bool isZoomChanged;
 
-const uint32_t gridWidth = 60, gridHeight = 30;
+const uint32_t gridWidth = 50000, gridHeight = 50000;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 1;
+const uint32_t numberOfTasks = 10;
 std::unique_ptr<Field> grid;
 
 static bool gridUpdate = true;
 
-float lensDistortion = 0.17;
+float lensDistortion = 0.07;
 
 int32_t brushSize = 0;
 
@@ -500,7 +500,7 @@ int main() {
     GLFWwindow* window;
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
 
-//#define FULLSCREEN
+#define FULLSCREEN
 #ifdef FULLSCREEN
     window = glfwCreateWindow(1920, 1080, "Game ofLife", glfwGetPrimaryMonitor(), NULL);
 #else
