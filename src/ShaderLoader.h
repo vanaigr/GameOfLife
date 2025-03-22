@@ -22,6 +22,22 @@ public:
 
     void attachShaders(const unsigned int programId);
     void deleteShaders();
+
+    void linkProgram(const unsigned int programId) {
+        glLinkProgram(programId);
+
+        GLint linkStatus;
+        glGetProgramiv(programId, GL_LINK_STATUS, &linkStatus);
+        if (linkStatus == GL_FALSE) {
+            GLint logLength;
+            glGetProgramiv(programId, GL_INFO_LOG_LENGTH, &logLength);
+
+            char *logMessage = (char *)malloc(logLength);
+            glGetProgramInfoLog(programId, logLength, NULL, logMessage);
+            fprintf(stderr, "Shader Program Linking Error:\n%s\n", logMessage);
+            free(logMessage);
+        }
+    }
 };
 
 

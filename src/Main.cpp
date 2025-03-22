@@ -553,7 +553,7 @@ int main() {
 
     sl.attachShaders(mainProg);
 
-    glLinkProgram(mainProg);
+    sl.linkProgram(mainProg);
     glValidateProgram(mainProg);
 
     sl.deleteShaders();
@@ -679,7 +679,7 @@ int main() {
     //ppsl.addShaderFromProjectFilePath("shaders/pp_vignette.shader", GL_FRAGMENT_SHADER, "Postprocessing vignette shader");
 
     ppsl.attachShaders(postProcessingProg);
-    glLinkProgram(postProcessingProg);
+    ppsl.linkProgram(postProcessingProg);
     glValidateProgram(postProcessingProg);
     ppsl.deleteShaders();
 
