@@ -12,7 +12,7 @@
 #include"AutoTimer.h"
 #include"MedianCounter.h"
 
-#include<nmmintrin.h>
+#include<smmintrin.h>
 
 #include<algorithm>
 
@@ -55,6 +55,9 @@ public:
         auto const buffer = getBuffer(type) + paddingLen;
         auto const rowSize = rowLength * cellsBatchSize;
 
+        auto const lastRowCellBatch = (width - 1) / cellsBatchLength;
+        auto const lastRowCellInBatch = (width - 1) % cellsBatchLength;
+
         auto const firstEmptyRowCellBatch = width / cellsBatchLength;
         auto const firstEmptyRowCellInBatch = width % cellsBatchLength;
 
@@ -74,25 +77,29 @@ public:
         //copy left/right neighbours to other side
         {
             for(int32_t row = 0; row != height; row++) {
-                auto const rowOffset = row * rowLength;
+                auto rowStart = buffer + row * rowLength;
 
-                auto &cells = *(buffer + rowOffset + firstEmptyRowCellBatch);
+                auto const firstCell = rowStart[0] & 1;
+                auto const lastCell = (rowStart[rowLength + lastRowCellBatch] >> lastRowCellInBatch) & 1;
 
-                auto const firstCell = *(buffer + rowOffset) & 1;
-                auto const lastCell = (*(buffer + rowOffset + rowLength + rowLength-1) >> (firstEmptyRowCellInBatch-1)) & 1;
+                auto &forStartCell = rowStart[firstEmptyRowCellBatch];
+                forStartCell = (forStartCell & ~(1u << firstEmptyRowCellInBatch))
+                    | (firstCell << firstEmptyRowCellInBatch);
 
-                cells = (cells & ~(~0 << (firstEmptyRowCellInBatch)))
-                    | (firstCell << firstEmptyRowCellInBatch)
+                auto &forEndCell = rowStart[rowLength - 1];
+                forEndCell = (forEndCell & ~(1u << (cellsBatchLength-1)))
                     | (lastCell << (cellsBatchLength-1));
             }
 
             //copy recalculated neighbours to padding.
-            *(startPaddingRow-1) = *(buffer + gridLen - rowLength - 1);
+            *(endPaddingRow + firstEmptyRowCellBatch) = *(buffer + firstEmptyRowCellBatch);
             *(endPaddingRow + rowLength - 1) = *(buffer + rowLength - 1);
+            *(endPaddingRow + rowLength) = *(buffer + rowLength);
         }
 
         //copy start padding row
         std::memcpy(startPaddingRow, buffer + gridLen - rowLength, rowSize);
+        *(startPaddingRow - 1) = *(buffer + gridLen - rowLength - 1);
     }
 
     void swapBuffers() { buffersSwapped = !buffersSwapped; }
@@ -568,7 +575,12 @@ bool Field::tryFinishGeneration() {
                 for (int xo = -1; xo <= 1; xo++) {
                     //int x = ((index + xo) + width()) % width(),
                     //    y = (((index / width()) + yo) + height()) % height();
-                    auto offsetedIndex = this->coordAsIndex(coord + vec2i(xo, yo));//this->normalizeIndex(index + xo + gridPimpl->width_grid * yo);//x + width() * y;
+                    auto const offC = coord + vec2i(xo, yo);
+                    /*if(offC.x < 0) {
+                        offC.x =
+                    }*/
+
+                    auto offsetedIndex = this->coordAsIndex(offC);//this->normalizeIndex(index + xo + gridPimpl->width_grid * yo);//x + width() * y;
 
                     const auto index_actual_int{ gridPimpl->cellI2BatchI(offsetedIndex) };
                     if(last_actual_int != index_actual_int) {
