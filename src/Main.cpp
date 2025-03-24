@@ -64,10 +64,10 @@ static double dVpSizeDesired, dVpSize;
 vec2d desiredZoomPoint, zoomPoint; //TODO: init
 bool isZoomChanged;
 
-const uint32_t gridWidth = 60;
-const uint32_t gridHeight = 30;
+const uint32_t gridWidth = 65536;
+const uint32_t gridHeight = 65536;
 const uint32_t gridSize = gridWidth * gridHeight;
-const uint32_t numberOfTasks = 1;
+const uint32_t numberOfTasks = 2;
 std::unique_ptr<Field> grid;
 
 static bool gridUpdate = true;
@@ -88,7 +88,7 @@ PaintMode paintMode = PaintMode::NONE;
 vec2d mousePos(0), pmousePos(0, 0);
 
 std::chrono::steady_clock::time_point lastGridUpdateTime;
-uint32_t gridUpdatesPerSecond = 5;
+uint32_t gridUpdatesPerSecond = 1;
 
 std::chrono::steady_clock::time_point curTime;
 float r1 = 1; //w key not pressed
@@ -206,10 +206,10 @@ static vec2d mouseToGlobal() {
         * space.vpSize + space.vpPos;
 }
 
-vec2i globalAsCell(vec2d coord) {
+vec2l globalAsCell(vec2d coord) {
     return vec2{
-        int(misc::modf(coord.x, gridWidth)),
-        int(misc::modf(coord.y, gridHeight))
+        int64_t(misc::modf(coord.x, gridWidth)),
+        int64_t(misc::modf(coord.y, gridHeight))
     };
 }
 
@@ -219,13 +219,13 @@ void printMouseCellInfo() {
     const auto mouseCell = grid->cellAtCoord(mouseCellCoord);
 
     printf(
-        "mouse is at (%d; %d), index=%" PRId64 " (%" PRId64 " mod 16), cell:%s (%d)" "\n",
+        "mouse is at (%" PRId64 "; %" PRId64 "), index=%" PRId64 " (%" PRId64 " mod 16), cell:%s (%d)" "\n",
         mouseCellCoord.x, mouseCellCoord.y, mouseCellIndex, mouseCellIndex % 16, fieldCell::asString(mouseCell), int(mouseCell)
     );
 
     for (int i = -1; i <= 1; i++) {
         for (int j = -1; j <= 1; j++)
-            std::cout << (grid->cellAtCoord(mouseCellCoord + vec2i(j, i)) ? '1' : '0') << ' ';
+            std::cout << (grid->cellAtCoord(mouseCellCoord + vec2l(j, i)) ? '1' : '0') << ' ';
         std::cout << std::endl;
     }
 }
@@ -382,7 +382,7 @@ void updateState() {
     curTime = std::chrono::steady_clock::now();
 
     vec2d global = mouseToGlobal();
-    vec2i cell = globalAsCell(global);
+    auto cell = globalAsCell(global);
 
     const auto gridUpdateElapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - lastGridUpdateTime).count();
     if(
@@ -406,21 +406,12 @@ void updateState() {
 
         for (int32_t yo = -brushSize; yo <= brushSize; yo++) {
             for (int32_t xo = -brushSize; xo <= brushSize; xo++) {
-                const vec2i offset{ xo, yo };
-                const auto coord = cell + offset;
-
                 cells.push_back(
                     Cell{
                         paintMode == PaintMode::PAINT ? fieldCell::cellAlive : fieldCell::cellDead,
-                        grid->coordAsIndex(cell + offset)
+                        grid->coordAsIndex(cell + vec2l{ xo, yo })
                     }
                 );
-                /*if (paintMode == PaintMode::PAINT) {
-                    grid->setCellAtCoord(cell + offset, FieldCell::ALIVE);
-                }
-                else if (paintMode == PaintMode::DELETE) {
-                    grid->setCellAtCoord(coord + offset, FieldCell::DEAD);
-                }*/
             }
         }
         assert(cells.size() == size);

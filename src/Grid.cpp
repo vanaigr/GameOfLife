@@ -19,9 +19,11 @@
 using Cells = uint32_t;
 static constexpr auto cellsBatchSize = 4;
 static constexpr auto cellsBatchLength = 32;
+static constexpr auto cellsBatchShift = 5;
+static constexpr auto cellsBatchMask = (1 << cellsBatchShift) - 1;
 
 struct Field::FieldPimpl {
-    using index_t = int32_t;
+    using index_t = int64_t;
 
     using BufferType = bool;
     static constexpr BufferType bufCur = false;
@@ -29,18 +31,18 @@ struct Field::FieldPimpl {
 
     Cells* buffer;
 
-    int32_t width;
-    int32_t height;
-    int32_t rowLength;
+    int64_t width;
+    int64_t height;
+    int64_t rowLength;
     bool buffersSwapped;
 
 public:
-    FieldPimpl(const int32_t gridWidth, const int32_t gridHeight) {
+    FieldPimpl(const int64_t gridWidth, const int64_t gridHeight) {
         width = gridWidth;
         height = gridHeight;
-        rowLength = misc::intDivCeil(width, cellsBatchLength);
-        // edge cell optimization
-        if(rowLength * cellsBatchLength - width < 2) rowLength++;
+        // +2 is edge cell optimization
+        rowLength = (width + 2) >> cellsBatchShift;
+        if((width + 2) & cellsBatchMask) rowLength++;
 
         auto const bufferLen = bufferLength();
         auto const paddingLen = bufferPaddingLength();
@@ -55,11 +57,11 @@ public:
         auto const buffer = getBuffer(type) + paddingLen;
         auto const rowSize = rowLength * cellsBatchSize;
 
-        auto const lastRowCellBatch = (width - 1) / cellsBatchLength;
-        auto const lastRowCellInBatch = (width - 1) % cellsBatchLength;
+        auto const lastRowCellBatch = (width - 1) >> cellsBatchShift;
+        auto const lastRowCellInBatch = (width - 1) & cellsBatchMask;
 
-        auto const firstEmptyRowCellBatch = width / cellsBatchLength;
-        auto const firstEmptyRowCellInBatch = width % cellsBatchLength;
+        auto const firstEmptyRowCellBatch = width >> cellsBatchShift;
+        auto const firstEmptyRowCellInBatch = width & cellsBatchMask;
 
         //order is important as if there can be only one row,
         //in which case this algorithm *should* still work:
@@ -76,7 +78,7 @@ public:
 
         //copy left/right neighbours to other side
         {
-            for(int32_t row = 0; row != height; row++) {
+            for(index_t row = 0; row != height; row++) {
                 auto rowStart = buffer + row * rowLength;
 
                 auto const firstCell = rowStart[0] & 1;
@@ -127,23 +129,23 @@ public:
         const auto row = misc::longDivFloor(int64_t(index), int64_t(width));
         const auto col = misc::mod((int64_t)index, (int64_t)width);
 
-        const auto col_int = col / cellsBatchLength;
-        const auto shift = col % cellsBatchLength;
+        const auto col_int = col >> cellsBatchShift;
+        const auto shift = col & cellsBatchMask;
 
         auto& cur{ grid[(int64_t)bufferPaddingLength() + row * (int64_t)rowLength + col_int] };
 
         cur = (cur & ~(0b1u << shift)) | (static_cast<uint32_t>(cell) << shift);
     }
 
-    uint32_t& getCellsActual_int(int32_t const index_actual_int, BufferType const type = bufCur) const {
+    uint32_t& getCellsActual_int(int64_t const index_actual_int, BufferType const type = bufCur) const {
         return getBuffer(type)[index_actual_int + bufferPaddingLength()];
     }
 
-    uint32_t cellI2BatchI(int64_t index) const {
+    int64_t cellI2BatchI(int64_t index) const {
         const auto row = misc::longDivFloor(index, width);
         const auto col = misc::mod(index, (int64_t)width);
 
-        const auto col_int = col / cellsBatchLength;
+        const auto col_int = col >> cellsBatchShift;
 
         return row * rowLength + col_int;
     }
@@ -152,10 +154,10 @@ public:
         auto const offset = (type == bufNext) ^ buffersSwapped ? bufferLength() : 0;
         return buffer + offset;
     }
-    uint32_t gridLength() const {
+    int64_t gridLength() const {
         return height * rowLength;
     }
-    uint32_t bufferPaddingLength() const {
+    int64_t bufferPaddingLength() const {
         return rowLength + 1/*
             extra row before/after the grid repeating the opposite row
             and 1 cell on each side for the first/last cell's neighbour,
@@ -163,22 +165,22 @@ public:
             so it is +1 always for consistency
         */;
     }
-    uint32_t bufferLength() const {
+    int64_t bufferLength() const {
         return gridLength() + 2*bufferPaddingLength();
     }
 };
 
 struct Field::GridData {
-private: static const uint32_t samples = 30;
+private: static const int samples = 30;
 public:
     UMedianCounter gridUpdate{ samples }, bufferSend{ samples };
-    uint32_t task__iteration;
-    uint32_t task__index;
+    int task__iteration;
+    int task__index;
 
     std::unique_ptr<FieldPimpl>& grid;
     std::atomic_bool& interrupt_flag;
-    uint32_t startBatch;
-    uint32_t endBatch;
+    int64_t startBatch;
+    int64_t endBatch;
     std::unique_ptr<FieldOutput> const buffer_output;
 
     void generationUpdated() {
@@ -191,19 +193,19 @@ public:
 
 public:
     GridData(
-        uint32_t index_,
+        int index_,
         std::unique_ptr<FieldPimpl>& grid_,
         std::atomic_bool& interrupt_flag_,
-        uint32_t startBatch_,
-        uint32_t endBatch_,
+        int64_t startBatch_,
+        int64_t endBatch_,
         std::unique_ptr<FieldOutput> &&output_
     ) :
         task__iteration{ 0 },
-        task__index(index_),
-        grid(grid_),
-        interrupt_flag(interrupt_flag_),
-        startBatch(startBatch_),
-        endBatch  (endBatch_),
+        task__index{ index_ },
+        grid{ grid_ },
+        interrupt_flag{ interrupt_flag_ },
+        startBatch{ startBatch_ },
+        endBatch  { endBatch_ },
         buffer_output{ std::move(output_) }
     {}
 };
@@ -218,17 +220,17 @@ struct Remainder {
 static uint32_t newGenerationBatched(
     Remainder const previousRemainder,
     Cells *base,
-    int32_t const rowLength,
+    int64_t const rowLength,
     Remainder &currentRemainder_out
 ) {
     // [0, 16] [1, 17] ... [15, 31], where for cells x, y: [x, y] means 0b000y'000x
-    auto const unpackCellsAs4Bits = [](const uint32_t number) -> __m128i {
+    auto const unpackCellsAs4Bits = [](const uint32_t cells) -> __m128i {
         auto const cellPosForByteMask = _mm_setr_epi8(
             1, 2, 4, 8, 16, 32, 64, 128u,
             1, 2, 4, 8, 16, 32, 64, 128u
         );
 
-        auto const numberReg = _mm_cvtsi32_si128(number);
+        auto const numberReg = _mm_cvtsi32_si128(cells);
         auto const numberDupBytes = _mm_unpacklo_epi8(numberReg, numberReg);
 
         auto const numQuadrupleLowBytes = _mm_shufflelo_epi16(numberDupBytes, 0b01'01'00'00);
@@ -302,7 +304,7 @@ static uint32_t newGenerationBatched(
     return lower16 | (higher16 << 16);
 }
 
-static Remainder calcRemainder(Field::FieldPimpl const &grid, int32_t const batchIndex) {
+static Remainder calcRemainder(Field::FieldPimpl const &grid, int64_t const batchIndex) {
     auto const buffer = grid.getBuffer(Field::FieldPimpl::bufCur);
     auto const base = buffer + grid.bufferPaddingLength() + batchIndex -  1;
     auto const top  = *(base - grid.rowLength);
@@ -325,16 +327,16 @@ static Remainder calcRemainder(Field::FieldPimpl const &grid, int32_t const batc
 static void threadUpdateGrid(Field::GridData& data) {
     Timer<> t{};
     auto& grid = *data.grid.get();
-    int32_t const width_grid = static_cast<int32_t>(grid.width);
-    int32_t const width_int = static_cast<int32_t>(grid.rowLength);
+    auto const width_grid = grid.width;
+    auto const width_int = grid.rowLength;
 
 
-    int32_t const startBatch = data.startBatch;
-    int32_t const endBatch = data.endBatch;
-    int32_t const startIndex = startBatch * cellsBatchLength;
-    int32_t const endIndex = endBatch * cellsBatchLength; //may be out of bounds padding required
+    auto const startBatch = data.startBatch;
+    auto const endBatch = data.endBatch;
+    auto const startIndex = startBatch * cellsBatchLength;
+    auto const endIndex = endBatch * cellsBatchLength; //may be out of bounds padding required
 
-    int32_t i = startBatch;
+    auto i = startBatch;
     auto previousRemainder = calcRemainder(grid, i);
     uint64_t newGenWindow = 0;
 
@@ -343,7 +345,7 @@ static void threadUpdateGrid(Field::GridData& data) {
 
     auto lastSyncI = i;
     auto const sendBatchCount = 16384;
-    int32_t totalElapsed = 0;
+    int totalElapsed = 0;
     auto const sync = [&](bool force = false) {
         auto endI = i - 1;
         if(!force && lastSyncI + sendBatchCount > endI) return;
@@ -355,8 +357,8 @@ static void threadUpdateGrid(Field::GridData& data) {
         if(output) {
             Timer<> t2{};
             output->write(FieldModification{
-                uint32_t(lastSyncI),
-                uint32_t(endI - lastSyncI),
+                lastSyncI,
+                endI - lastSyncI,
                 &grid.getCellsActual_int(lastSyncI, Field::FieldPimpl::bufNext),
             });
             totalElapsed += t2.elapsedTime();
@@ -374,7 +376,7 @@ static void threadUpdateGrid(Field::GridData& data) {
 
     auto const j_count = 128;
     for (; (i + j_count) < endBatch + 1;) {
-        for (uint32_t j = 0; j < j_count; ++j, ++i) {
+        for (auto j = 0; j < j_count; ++j, ++i) {
             auto const newGen = newGenerationBatched(previousRemainder, buffer + i, rowLen, previousRemainder/*out param*/);
 
             newGenWindow = (newGenWindow >> 32) | (uint64_t(newGen) << 31);
@@ -400,9 +402,9 @@ static void threadUpdateGrid(Field::GridData& data) {
     data.gridUpdate.add(t.elapsedTime());
     data.bufferSend.add(totalElapsed);
 
-    const uint32_t j = 1 << (data.task__iteration % (((grid.width-1) % 32) + 1));
-    const uint32_t zero = 0;
     if(false) {
+        const uint32_t j = 1 << (data.task__iteration % (((grid.width-1) % 32) + 1));
+        const uint32_t zero = 0;
         auto output = data.buffer_output->batched();
         output->write(FieldModification{ 0, 1, &zero });
         output->write(FieldModification{ 1, 1, &j });
@@ -412,11 +414,11 @@ static void threadUpdateGrid(Field::GridData& data) {
     data.generationUpdated();
 }
 
-uint32_t Field::width_actual() const {
+int64_t Field::width_actual() const {
     return gridPimpl->rowLength * cellsBatchLength;
 }
 
-uint32_t Field::size_bytes() const {
+int64_t Field::size_bytes() const {
     return gridPimpl->gridLength() * cellsBatchSize;
 }
 
@@ -426,7 +428,7 @@ uint32_t* Field::rawData() const {
 
 
 Field::Field(
-    const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_,
+    const int64_t gridWidth, const int64_t gridHeight, const int numberOfTasks_,
     std::function<std::unique_ptr<FieldOutput>()> current_outputs,
     std::function<std::unique_ptr<FieldOutput>()> buffer_outputs
 ) :
@@ -434,14 +436,14 @@ Field::Field(
     isStopped{ false },
     current_output{ current_outputs() },
     buffer_output{ buffer_outputs() },
-    numberOfTasks(numberOfTasks_),
+    numberOfTasks{ numberOfTasks_ },
     gridTasks{ new std::unique_ptr<Task<GridData>>[numberOfTasks_] },
     interrupt_flag{ false },
     indecesToBrokenCells{}
 {
     assert(numberOfTasks >= 1);
 
-    const auto createGridTask = [this, &buffer_outputs](const uint32_t index, const uint32_t startBatch, const uint32_t endBatch) -> void {
+    const auto createGridTask = [this, &buffer_outputs](const int64_t index, const int64_t startBatch, const int64_t endBatch) -> void {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
         gridTasks.get()[index] = std::unique_ptr<Task<GridData>>(
@@ -458,11 +460,11 @@ Field::Field(
         );
     };
 
-    uint32_t const totalBatches = gridPimpl->gridLength();
-    const uint32_t numberOfBatches = totalBatches / numberOfTasks;
+    auto const totalBatches = gridPimpl->gridLength();
+    const auto numberOfBatches = totalBatches / numberOfTasks;
 
-    uint32_t curBatches = 0;
-    for (uint32_t i = 0; i < numberOfTasks - 1; i++) {
+    int64_t curBatches = 0;
+    for (auto i = 0; i < numberOfTasks - 1; i++) {
         createGridTask(i, curBatches, curBatches + numberOfBatches);
         curBatches += numberOfBatches;
     }
@@ -494,11 +496,11 @@ void Field::halt() {
     waitForGridTasks();
 }
 
-FieldCell Field::cellAtIndex(const uint32_t index) const {
+FieldCell Field::cellAtIndex(const int64_t index) const {
     return gridPimpl->cellAt_grid(normalizeIndex(index));
 }
 
-void Field::setCellAtIndex(const uint32_t index, FieldCell cell) {
+void Field::setCellAtIndex(const int64_t index, FieldCell cell) {
     Cell const cell_{ cell, normalizeIndex(index) };
     setCells(&cell_, 1);
 }
@@ -511,7 +513,7 @@ void Field::setCells(Cell const* const cells, size_t const count) {
         }
     }
     else {
-        std::vector<uint32_t> cells_indeces_actual_int{};
+        std::vector<int64_t> cells_indeces_actual_int{};
 
         int64_t last_index_actual_int = -1;
         for (size_t i = 0; i < count; ++i) {
@@ -535,12 +537,13 @@ void Field::setCells(Cell const* const cells, size_t const count) {
     }
 }
 
-static FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
+/*
+static FieldCell updatedCell(const int64_t index, const std::unique_ptr<Field::FieldPimpl>& cellsGrid) {
     const auto width_grid = cellsGrid->width;
     const auto height = cellsGrid->height;
     uint8_t cell = cellsGrid->cellAt_grid(index);
 
-    uint32_t aliveNeighbours = 0;
+    int aliveNeighbours = 0;
 
     for (int yo = -1; yo <= 1; yo++) {
         for (int xo = -1; xo <= 1; xo++) {
@@ -556,9 +559,10 @@ static FieldCell updatedCell(const int32_t index, const std::unique_ptr<Field::F
 
     return fieldCell::nextGeneration(cell, aliveNeighbours);
 }
+*/
 
 bool Field::tryFinishGeneration() {
-    if(!isStopped) for(uint32_t i = 0; i < numberOfTasks; i++) {
+    if(!isStopped) for(auto i = 0; i < numberOfTasks; i++) {
         if(!gridTasks.get()[i]->resultReady()) return false;
     }
     interrupt_flag.store(false);
@@ -568,21 +572,14 @@ bool Field::tryFinishGeneration() {
         int64_t last_actual_int = -1;
 
         for (auto it = indecesToBrokenCells.begin(); it != indecesToBrokenCells.end(); it++) {
-            const uint32_t index = *it;
-            const vec2i coord = this->indexAsCoord(index);
+            const auto index = *it;
+            const auto coord = this->indexAsCoord(index);
 
             for (int yo = -1; yo <= 1; yo++) {
                 for (int xo = -1; xo <= 1; xo++) {
-                    //int x = ((index + xo) + width()) % width(),
-                    //    y = (((index / width()) + yo) + height()) % height();
-                    auto const offC = coord + vec2i(xo, yo);
-                    /*if(offC.x < 0) {
-                        offC.x =
-                    }*/
-
-                    auto offsetedIndex = this->coordAsIndex(offC);//this->normalizeIndex(index + xo + gridPimpl->width_grid * yo);//x + width() * y;
-
-                    const auto index_actual_int{ gridPimpl->cellI2BatchI(offsetedIndex) };
+                    auto const offC = coord + vec2l{ xo, yo };
+                    auto const offsetedIndex = this->coordAsIndex(offC);
+                    auto const index_actual_int{ gridPimpl->cellI2BatchI(offsetedIndex) };
                     if(last_actual_int != index_actual_int) {
                         repairedCells_actual_int.insert(index_actual_int);
                         last_actual_int = index_actual_int;
@@ -596,12 +593,11 @@ bool Field::tryFinishGeneration() {
         std::unique_ptr<FieldOutput> output = buffer_output->batched();
         auto& field = *this->gridPimpl.get();
         auto const rowLen = field.rowLength;
-        int32_t width_actual = field.rowLength * cellsBatchLength;
-        int32_t width_grid = field.width;
+        auto width_actual = field.rowLength * cellsBatchLength;
+        auto width_grid = field.width;
         auto const buffer = field.getBuffer(Field::FieldPimpl::bufCur) + field.bufferPaddingLength();
-        for (uint32_t index_actual_int : repairedCells_actual_int) {
-
-            auto const colIndex = int(index_actual_int % rowLen);
+        for (auto index_actual_int : repairedCells_actual_int) {
+            auto const colIndex = index_actual_int % rowLen;
 
             auto previousRemainder = calcRemainder(field, index_actual_int);
             uint64_t newGenerationWindow = newGenerationBatched(previousRemainder, buffer + index_actual_int, rowLen, previousRemainder);
@@ -610,7 +606,7 @@ bool Field::tryFinishGeneration() {
                 (newGenerationWindow >> 1) |
                 (uint64_t(newGenerationBatched(previousRemainder, buffer + index_actual_int + 1, rowLen, previousRemainder)) << (cellsBatchLength - 1));
 
-            uint32_t newGeneration = static_cast<uint32_t>(newGenerationWindow);
+            auto newGeneration = static_cast<uint32_t>(newGenerationWindow);
 
             auto const startRowCellIndex = index_actual_int / rowLen * width_grid;
 
@@ -636,7 +632,7 @@ void Field::startCurGeneration() {
 
 void Field::waitForGridTasks() {
     if (isStopped) return;
-    for (uint32_t i = 0; i < numberOfTasks; i++) {
+    for (auto i = 0; i < numberOfTasks; i++) {
         gridTasks.get()[i]->waitForResult();
     }
 }
@@ -645,15 +641,15 @@ void Field::deployGridTasks() {
         std::cerr << "trying to start task when `isStopped` is set\n";
         return;
     }
-    for(uint32_t i = 0; i < numberOfTasks; i++) {
+    for(auto i = 0; i < numberOfTasks; i++) {
         gridTasks.get()[i]->start();
     }
 }
 
-uint32_t Field::width() const {
+int64_t Field::width() const {
     return gridPimpl->width;
 }
-uint32_t Field::height() const {
+int64_t Field::height() const {
     return gridPimpl->height;
 }
 int64_t Field::size() const {

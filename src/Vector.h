@@ -60,4 +60,5 @@ struct vec2 {
 };
 
 using vec2i = vec2<int>;
+using vec2l = vec2<int64_t>;
 using vec2d = vec2<double>;

@@ -4,10 +4,6 @@ This is a high-performance implementation of [Conway's Game of Life](https://en.
 
 ![image](https://github.com/user-attachments/assets/8159fe09-9bab-4a1d-ab74-d888776e0fcc)
 
-> [!WARNING]
-> I underestimated how fast computers are. Turns out you can easily hit the limit of a 32 bit integer for the number of cells.
-> Do not make your field more than 32'768 x 32'768 cells.
-
 ## Controls
 
 - `Space` - pause/unpause the game

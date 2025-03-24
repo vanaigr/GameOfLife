@@ -10,6 +10,7 @@
 #include <atomic>
 #include <vector>
 #include"MedianCounter.h"
+#include"Misc.h"
 #include<unordered_set>
 #include<functional>
 
@@ -30,7 +31,7 @@ namespace fieldCell {
 }
 
 struct FieldModification {
-    uint32_t startIndex_int, size_int;
+    int64_t startIndex_int, size_int;
     const uint32_t *data;
 };
 
@@ -60,13 +61,13 @@ private:
     std::unique_ptr<FieldOutput> const current_output;
     std::unique_ptr<FieldOutput> const buffer_output;
 
-    const uint32_t numberOfTasks;
+    int numberOfTasks;
     std::unique_ptr<std::unique_ptr<Task<GridData>>[/*numberOfTasks*/]> gridTasks;
     std::atomic_bool interrupt_flag;
-    std::unordered_set<uint32_t> indecesToBrokenCells;
+    std::unordered_set<int64_t> indecesToBrokenCells;
 public:
     Field(
-        const uint32_t gridWidth, const uint32_t gridHeight, const size_t numberOfTasks_,
+        const int64_t gridWidth, const int64_t gridHeight, const int numberOfTasks_,
         std::function<std::unique_ptr<FieldOutput>()> current_outputs,
         std::function<std::unique_ptr<FieldOutput>()> buffer_outputs
     );
@@ -81,30 +82,29 @@ public:
 
     void fill(const FieldCell cell);
 
-    FieldCell cellAtIndex(const uint32_t index) const;
+    FieldCell cellAtIndex(const int64_t index) const;
 
-    void setCellAtIndex(const uint32_t index, FieldCell cell);
-    void setCellAtCoord(const vec2i& coord, FieldCell cell);
+    void setCellAtIndex(const int64_t index, FieldCell cell);
+    void setCellAtCoord(const vec2l& coord, FieldCell cell);
     void setCells(Cell const *const cells, size_t const count);
 
-    FieldCell cellAtCoord(const vec2i& coord) const;
-    FieldCell cellAtCoord(const int32_t column, const int32_t row) const;
+    FieldCell cellAtCoord(const vec2l& coord) const;
+    FieldCell cellAtCoord(const int64_t column, const int64_t row) const;
 
-    vec2i indexAsCoord(const int32_t index) const;
+    vec2l indexAsCoord(const int64_t index) const;
 
-    int64_t coordAsIndex(const vec2i& coord) const;
-    int64_t coordAsIndex(const int32_t column, const int32_t row) const;
+    int64_t coordAsIndex(const vec2l& coord) const;
+    int64_t coordAsIndex(const int64_t column, const int64_t row) const;
 
     int64_t normalizeIndex(const int64_t index) const;
-    vec2i normalizeCoord(const vec2i& coord) const;
+    vec2l normalizeCoord(const vec2l& coord) const;
 
-    uint32_t width() const;
-    uint32_t height() const;
+    int64_t width() const;
+    int64_t height() const;
     int64_t size() const;
 
-    uint32_t size_bytes() const;
-    //uint32_t size_actual() const;
-    uint32_t width_actual() const;
+    int64_t size_bytes() const;
+    int64_t width_actual() const;
     uint32_t *rawData() const;
 
     void halt();
@@ -113,38 +113,38 @@ private:
     void deployGridTasks();
 };
 
-inline void Field::setCellAtCoord(const vec2i& coord, FieldCell cell) {
+inline void Field::setCellAtCoord(const vec2l& coord, FieldCell cell) {
     setCellAtIndex(coordAsIndex(coord), cell);
 }
 
-inline FieldCell Field::cellAtCoord(const vec2i& coord) const {
-    return cellAtIndex(static_cast<int32_t>(coordAsIndex(coord)));
+inline FieldCell Field::cellAtCoord(const vec2l& coord) const {
+    return cellAtIndex(coordAsIndex(coord));
 }
 
-inline FieldCell Field::cellAtCoord(const int32_t column, const int32_t row) const {
-    return cellAtCoord(vec2i(column, row));
+inline FieldCell Field::cellAtCoord(const int64_t column, const int64_t row) const {
+    return cellAtCoord(vec2l(column, row));
 }
 
-inline vec2i Field::indexAsCoord(const int32_t index) const {
+inline vec2l Field::indexAsCoord(const int64_t index) const {
     const auto index_n = normalizeIndex(index);
     const auto x = index_n % width();
     const auto y = index_n / width();
-    return vec2i(x, y);
+    return vec2l(x, y);
 }
 
-inline int64_t Field::coordAsIndex(const vec2i& coord) const {
+inline int64_t Field::coordAsIndex(const vec2l& coord) const {
     const auto coord_n = normalizeCoord(coord);
     return (int64_t)coord_n.x + (int64_t)coord_n.y * (int64_t)width();
 }
 
-inline int64_t Field::coordAsIndex(const int32_t column, const int32_t row) const {
-    return coordAsIndex(vec2i(column, row));
+inline int64_t Field::coordAsIndex(const int64_t column, const int64_t row) const {
+    return coordAsIndex(vec2l(column, row));
 }
 
 inline int64_t Field::normalizeIndex(const int64_t index) const {
-    return misc::mod(index, static_cast<int64_t>(size()));
+    return misc::mod(index, size());
 }
-inline vec2i Field::normalizeCoord(const vec2i& coord) const {
-    return vec2i(misc::mod(coord.x, width()), misc::mod(coord.y, height()));
+inline vec2l Field::normalizeCoord(const vec2l& coord) const {
+    return vec2l(misc::mod(coord.x, width()), misc::mod(coord.y, height()));
 }
 
